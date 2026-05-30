@@ -6,8 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake libssl-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
-# Vendor libsrt at a known-good tag for reproducibility.
-ARG LIBSRT_VERSION=v1.5.4
+# Vendor libsrt at the latest stable tag (v1.5.5, 2024-04-28) for reproducibility.
+# Notable fixes vs prior: token-bucket MAXREXMITBW controller, handshake buffer-overflow
+# fix, srt_strerror() reentrancy fix, Windows ARM64 support (not used by us but tracks
+# upstream platform parity), CMake 3.5+ compatibility, static OpenSSL build fixes.
+ARG LIBSRT_VERSION=v1.5.5
 RUN git clone --depth=1 --branch=${LIBSRT_VERSION} https://github.com/Haivision/srt.git
 WORKDIR /build/srt
 RUN ./configure --prefix=/usr/local && make -j$(nproc) && make install
