@@ -1,0 +1,13 @@
+# wave-bridge-edge — code owners (review required on every PR; enforced by branch protection).
+# Layer-2 Bridges container plane of the WAVE Protocol Plane. The streaming team owns the bridge
+# shape so the auth/meter/scope/x402 discipline never drifts across protocol containers.
+
+* @wave-av/streaming-team
+
+# Container Dockerfiles + adapter code — the security-sensitive surface (vendored binaries,
+# protocol parsers, transcode pipelines).
+/containers/   @wave-av/streaming-team
+
+# Governance / CI / config changes.
+/.github/      @wave-av/streaming-team
+/wrangler.toml @wave-av/streaming-team
