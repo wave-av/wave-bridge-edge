@@ -1,9 +1,20 @@
-# NDI bridge — Newtek NDI Library + Go adapter that bridges NDI ↔ MoQ tracks.
+# NDI bridge — Vizrt NDI 6 SDK + Go adapter that bridges NDI ↔ MoQ tracks.
+#
+# Target: NDI SDK 6.3.2 (current as of 2026-04-13). NDI 6 adds:
+#   • 10+ bit HDR support
+#   • WAN connectivity via NDI Discovery Server (changes our topology — see below)
+#
+# Topology note (NDI 6 WAN): NDI Discovery Server runs standalone on Linux,
+# enabling NDI streams to traverse the public internet without LAN-local mDNS.
+# This means we have TWO paths for NDI sources:
+#   (a) Local Agent (host-mode wave-agent, lowest latency) — sources discovered on LAN
+#   (b) Discovery Server (this container, slightly higher latency) — sources reach WAN
+# Both layer into the same gateway scope/auth/x402 settle path.
 #
 # ⚠️ LICENSE GATE: NDI SDK redistribution for server-side container use is gated
-# on Newtek/Vizrt commercial-license clearance (wave-foundation task #142). This
+# on Vizrt commercial-license clearance (wave-foundation task #142). This
 # Dockerfile builds the ADAPTER ONLY — NDI Library binary is fetched at runtime
-# from a Newtek-authorized URL via NDI_SDK_URL once licensing closes.
+# from a Vizrt-authorized URL via NDI_SDK_URL once licensing closes.
 #
 # Until then this image health-passes but emits NotImplemented on protocol paths.
 
