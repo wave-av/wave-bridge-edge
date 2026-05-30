@@ -1,0 +1,16 @@
+name = "wave-bridge-edge"
+main = "src/worker.ts"
+compatibility_date = "2026-04-15"
+compatibility_flags = ["nodejs_compat"]
+
+# wave-foundation pin — keep in sync with .foundation-version.
+[[unsafe.bindings]]
+type = "plain_text"
+name = "FOUNDATION_VERSION"
+text = "v1.5.0"
+
+# Container binding — populated when Wave-1 SRT spike provisions.
+# [[containers]]
+# name = "srt-bridge"
+# image = "docker.io/wave-av/wave-srt-bridge:0.0.0-scaffold"
+# instance_type = "standard"  # or "lite" / "max" per active-CPU economics
