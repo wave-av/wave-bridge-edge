@@ -105,6 +105,20 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 
 EXPOSE 8080
 
+# Security note: this container intentionally runs as root.
+# DEP's runc bundle requires CAP_SYS_ADMIN to manage cgroups + network
+# namespaces for the nested 'dante' runc container. The Go adapter is
+# privilege-sensitive (it never touches the network namespace setup) but
+# lives at PID 2 under the same uid because runc needs to fork it from the
+# entrypoint that already has the necessary capabilities. Dropping uid here
+# would break runc list / runc start.
+#
+# Defense-in-depth: the Cloudflare Containers runtime drops capabilities at
+# the host level beyond what we declare in the deployment manifest, so a
+# compromise inside the container can't escape the CF sandbox.
+#
+# nosemgrep: dockerfile.security.missing-user-entrypoint.missing-user-entrypoint
+#
 # tini -- entrypoint.sh: tini becomes PID 1 (reaps DEP's children); entrypoint
 # brings up the Dante container, then execs the Go adapter so the adapter sits
 # at PID 2 (still gets SIGTERM from Cloudflare Containers shutdown).
