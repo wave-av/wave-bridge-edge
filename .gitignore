@@ -1,0 +1,20 @@
+# Go build artifacts
+containers/*/adapter/bridge
+containers/*/adapter/*/bridge
+**/bin/
+**/*.test
+**/*.out
+
+# Node
+node_modules/
+
+# Editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Secrets (defense-in-depth — primary path is $HOME/.wave/secrets/)
+*.env
+*.env.local
+*.cookie.txt
