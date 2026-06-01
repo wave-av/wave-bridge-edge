@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "1",
+  "repo": "wave-av/wave-bridge-edge",
+  "version": "0.1.0",
+  "lifecycle": "alpha",
+  "planeLayer": 2,
+  "foundationPin": "v1",
+  "maintainers": [{ "team": "core" }],
+  "exposes": {
+    "apis": [
+      { "protocol": "srt", "endpoint": "srt://bridge.wave.online:9000", "auth": "wave-token-v1", "metered": true },
+      { "protocol": "ndi", "endpoint": "ndi://bridge.wave.online", "auth": "wave-token-v1", "metered": true },
+      { "protocol": "dante", "endpoint": "dante://bridge.wave.online", "auth": "wave-token-v1", "metered": true },
+      { "protocol": "moq", "endpoint": "moq://bridge.wave.online", "auth": "wave-token-v1", "metered": true }
+    ]
+  },
+  "consumes": {
+    "thirdParty": [
+      { "service": "audinate-dante-dep", "licenseGated": true },
+      { "service": "vizrt-ndi-redist", "licenseGated": true },
+      { "service": "cloudflare-containers", "licenseGated": false }
+    ],
+    "foundationFrameworks": ["frameworks/protocol-plane", "frameworks/platform-registry"]
+  },
+  "events": {
+    "publishes": [
+      { "topic": "bridge.stream.opened", "transport": "x402-meter" },
+      { "topic": "bridge.stream.closed", "transport": "x402-meter" }
+    ]
+  },
+  "tags": ["bridges", "public", "cf-containers", "x402-metered", "protocol-plane-layer-2"]
+}
