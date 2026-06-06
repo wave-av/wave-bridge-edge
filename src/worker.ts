@@ -34,7 +34,7 @@ const LLMS_TXT = `# WAVE — Bridge Edge
 > Any-to-any broadcast-protocol bridge (Layer 2 of the WAVE Protocol Plane). EARLY scaffold: routes
 > Worker traffic to CF Containers running native protocol binaries (SRT spike first; NDI/OMT/Dante
 > planned, license-gated). Most routes currently return 501. Part of WAVE — the open video API for
-> humans and AI agents.
+> people and AI agents.
 
 ## Start here
 - Product: https://bridge.wave.online
