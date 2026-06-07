@@ -44,7 +44,7 @@ const LLMS_TXT = `# WAVE — Bridge Edge
 > Worker traffic to CF Containers running native protocol binaries (SRT spike first; NDI/OMT/Dante
 > planned, license-gated). ALL protocol routes currently return 501 — none are live or metered yet.
 > /srt returns a typed 501 "not_activated" (scope srt:read|srt:write) until the container image is
-> pushed and CF Containers is enabled. Part of WAVE — the open video API for humans and AI agents.
+> pushed and CF Containers is enabled. Part of WAVE — the open video API for people and AI agents.
 
 ## Start here
 - Product: https://bridge.wave.online
