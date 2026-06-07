@@ -1,7 +1,11 @@
 // wave-bridge-edge — routes protocol traffic from the gateway to the right
-// CF Container. Scaffolded for Wave-1 SRT spike; deferred routes return 501.
+// CF Container. Scaffolded for Wave-1 SRT spike; the SRT route returns a typed,
+// honest 501 (`not_activated`) until the container image + CF Containers land;
+// every other protocol returns the generic 501. No route fabricates transport.
+import { handleSrt, type BridgeEnv } from "./srt";
+
 export default {
-	async fetch(request: Request): Promise<Response> {
+	async fetch(request: Request, env: BridgeEnv): Promise<Response> {
 		const url = new URL(request.url);
 		if (url.pathname === "/health") {
 			return Response.json({
@@ -21,6 +25,11 @@ export default {
 				headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" },
 			});
 		}
+		// SRT route (Wave 1). Honest typed 501 today; forward-shape behind a default-off flag (see srt.ts).
+		if (url.pathname === "/srt" || url.pathname.startsWith("/srt/")) {
+			return handleSrt(request, env);
+		}
+		// All other protocols are not implemented yet — generic honest 501.
 		return Response.json(
 			{ error: "BRIDGE_NOT_IMPLEMENTED", protocol: url.pathname.split("/")[1] ?? "unknown" },
 			{ status: 501 },
@@ -33,8 +42,9 @@ export default {
 const LLMS_TXT = `# WAVE — Bridge Edge
 > Any-to-any broadcast-protocol bridge (Layer 2 of the WAVE Protocol Plane). EARLY scaffold: routes
 > Worker traffic to CF Containers running native protocol binaries (SRT spike first; NDI/OMT/Dante
-> planned, license-gated). Most routes currently return 501. Part of WAVE — the open video API for
-> humans and AI agents.
+> planned, license-gated). ALL protocol routes currently return 501 — none are live or metered yet.
+> /srt returns a typed 501 "not_activated" (scope srt:read|srt:write) until the container image is
+> pushed and CF Containers is enabled. Part of WAVE — the open video API for humans and AI agents.
 
 ## Start here
 - Product: https://bridge.wave.online

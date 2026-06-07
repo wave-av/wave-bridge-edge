@@ -7,11 +7,12 @@
   "foundationPin": "v1",
   "maintainers": [{ "team": "core" }],
   "exposes": {
+    "_note": "HONESTY: this edge currently returns 501 for every protocol route — no transport is live. `metered`/`live` stay false until the CF Container image is pushed AND CF Containers is enabled (see /srt route in src/srt.ts). `scopes` are the canonical gateway read/write scopes (wave-gateway scopes.ts, PR #71).",
     "apis": [
-      { "protocol": "srt", "endpoint": "srt://bridge.wave.online:9000", "auth": "wave-token-v1", "metered": true },
-      { "protocol": "ndi", "endpoint": "ndi://bridge.wave.online", "auth": "wave-token-v1", "metered": true },
-      { "protocol": "dante", "endpoint": "dante://bridge.wave.online", "auth": "wave-token-v1", "metered": true },
-      { "protocol": "moq", "endpoint": "moq://bridge.wave.online", "auth": "wave-token-v1", "metered": true }
+      { "protocol": "srt", "endpoint": "srt://bridge.wave.online:9000", "auth": "wave-token-v1", "scopes": ["srt:read", "srt:write"], "status": "not_activated", "metered": false, "live": false },
+      { "protocol": "ndi", "endpoint": "ndi://bridge.wave.online", "auth": "wave-token-v1", "scopes": ["ndi:read", "ndi:write"], "status": "not_activated", "metered": false, "live": false },
+      { "protocol": "dante", "endpoint": "dante://bridge.wave.online", "auth": "wave-token-v1", "scopes": ["dante:read", "dante:write"], "status": "not_activated", "metered": false, "live": false },
+      { "protocol": "moq", "endpoint": "moq://bridge.wave.online", "auth": "wave-token-v1", "scopes": ["moq:read", "moq:write"], "status": "not_activated", "metered": false, "live": false }
     ]
   },
   "consumes": {
@@ -28,5 +29,5 @@
       { "topic": "bridge.stream.closed", "transport": "x402-meter" }
     ]
   },
-  "tags": ["bridges", "public", "cf-containers", "x402-metered", "protocol-plane-layer-2"]
+  "tags": ["bridges", "public", "cf-containers", "x402-metered-planned", "protocol-plane-layer-2", "alpha-not-activated"]
 }

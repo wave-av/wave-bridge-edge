@@ -9,8 +9,20 @@ type = "plain_text"
 name = "FOUNDATION_VERSION"
 text = "v1.5.0"
 
-# Container binding — populated when Wave-1 SRT spike provisions.
+# SRT activation flag — DEFAULT OFF. The /srt route (src/srt.ts) returns an honest typed 501
+# (`not_activated`) until BOTH of these are true:
+#   1. the [[containers]] srt-bridge binding below is provisioned (binding name MUST be SRT_BRIDGE), AND
+#   2. BRIDGE_FORWARD_ENABLED = "true".
+# Even with the flag flipped, the code FAIL-CLOSES to 501 unless the SRT_BRIDGE binding exists — so this
+# flag is inert (never fabricates transport) until the operator completes activation.
+[vars]
+BRIDGE_FORWARD_ENABLED = "false"
+
+# Container binding — populated when Wave-1 SRT spike provisions. OPERATOR-GATED: requires the
+# containers/srt image to be built+pushed (currently 0.0.0-scaffold, UNPUBLISHED) AND CF Containers
+# enabled on the account. The binding name MUST be SRT_BRIDGE (src/srt.ts reads env.SRT_BRIDGE).
 # [[containers]]
 # name = "srt-bridge"
+# binding = "SRT_BRIDGE"
 # image = "docker.io/wave-av/wave-srt-bridge:0.0.0-scaffold"
 # instance_type = "standard"  # or "lite" / "max" per active-CPU economics
