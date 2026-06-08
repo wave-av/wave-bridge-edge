@@ -29,7 +29,10 @@ FROM golang:1.24-bookworm AS adapter-builder
 
 WORKDIR /src
 COPY adapter/go.mod adapter/go.sum* ./
-RUN go mod download || true
+# Fail-loud on dependency resolution errors — `|| true` previously masked
+# legit go.mod problems and pushed failure into the `go build` step where it
+# surfaces as a confusing compile error (CodeRabbit Minor #4).
+RUN go mod download
 
 COPY adapter/ ./
 # Static binary; trims debug info; bridges deploy to scratch-adjacent rootfs.
@@ -46,12 +49,23 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 FROM debian:bookworm-slim AS dep-fetcher
 
 ARG DEP_VERSION=1.5.4.3
-ARG DEP_URL=https://dev.audinate.com/downloads/dep/container/x86_64/latest/
+# Pin the URL to the explicit versioned path (CodeRabbit Major #5). Audinate's
+# portal currently serves both /latest/ and per-version sub-paths; the per-
+# version directory is the immutable anchor. If a future build needs a Audinate
+# rev that only lives under /latest/, override via --build-arg DEP_URL_PATH=latest
+# AND bump DEP_SHA256 to the matching artifact. SHA256 stays the authoritative
+# fail-close gate either way.
+ARG DEP_URL_PATH=${DEP_VERSION}
+ARG DEP_URL=https://dev.audinate.com/downloads/dep/container/x86_64/${DEP_URL_PATH}/
 ARG DEP_SHA256=7de270af282dfbcace8ded3c3797525de836ddc412b0cbc5977de38d778ad1e0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Pipefail before the pipe so a curl/sha256sum partial failure isn't masked by
+# the subsequent step (Hadolint DL4006).
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN --mount=type=secret,id=dna_cookie,target=/run/secrets/dna_cookie \
     set -eu; \
@@ -104,6 +118,17 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 EXPOSE 8080
+
+# HEALTHCHECK uses the Go adapter's /health endpoint (handleHealth). DEP-side
+# runc state + activation are reported inside the JSON body, so a 200 here means
+# the adapter is up; the body distinguishes "ready" from "DEP-not-running" so
+# CF Containers can route traffic away from a half-booted instance.
+# Trivy DS-0026 / Checkov CKV_DOCKER_2.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
+  CMD curl --fail --silent --show-error --max-time 2 http://127.0.0.1:8080/health \
+      > /dev/null || exit 1
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 
 # Security note: this container intentionally runs as root.
 # DEP's runc bundle requires CAP_SYS_ADMIN to manage cgroups + network

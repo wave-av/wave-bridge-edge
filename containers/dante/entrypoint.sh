@@ -29,16 +29,24 @@ cd "${DEP_DIR}"
 # loudly here — surface the error verbatim to wrangler logs.
 log "starting DEP runc container (DEP_VERSION=$(cat version 2>/dev/null || echo unknown))"
 ./dep.sh start &
-DEP_PID=$!
 
-# Give DEP a few seconds to spin up its dante container. dep.sh exits quickly
+# Fail-fast on a stuck DEP startup (CodeRabbit Major #6). dep.sh exits quickly
 # after backgrounding runc; the actual `dante` container shows up in
-# `./runc list` shortly after.
-sleep 3
-
-if ! ./runc list 2>/dev/null | grep -qw dante; then
-  log "WARNING: DEP container 'dante' not visible in runc list after 3s; continuing — adapter health endpoint will report state"
-fi
+# `./runc list` shortly after. Poll with a bounded retry, exit non-zero if it
+# never appears — a half-booted adapter would otherwise quietly serve /health
+# = degraded forever, defeating CF Containers' restart-on-fail.
+DEP_BOOT_TIMEOUT_S="${DEP_BOOT_TIMEOUT_S:-30}"
+deadline=$(( $(date +%s) + DEP_BOOT_TIMEOUT_S ))
+while ! ./runc list 2>/dev/null | grep -qw dante; do
+  if [ "$(date +%s)" -ge "${deadline}" ]; then
+    log "ERROR: DEP container 'dante' did not appear in runc list within ${DEP_BOOT_TIMEOUT_S}s; refusing to start adapter"
+    # Kill any straggler dep.sh children so CF Containers gets a clean exit.
+    pkill -f dep.sh 2>/dev/null || true
+    exit 1
+  fi
+  sleep 1
+done
+log "DEP container 'dante' is up"
 
 # ── License activation ─────────────────────────────────────────────────────
 # The CLI Dante Activator binary is bundled inside the DEP rootfs at

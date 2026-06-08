@@ -49,11 +49,13 @@ docker build \
 
 | Verb | Path | Auth | Purpose |
 |---|---|---|---|
-| GET | `/health` | none | DEP runc state + activation status |
-| GET | `/v1/devices` | gateway JWT | List Dante peers visible on this endpoint |
-| GET | `/v1/routes` | gateway JWT | Current subscriptions |
-| POST | `/v1/subscribe` | gateway JWT | `{rx_channel_id, remote_channel_name, remote_device_name}` |
-| POST | `/v1/unsubscribe` | gateway JWT | `{rx_channel_id}` |
+| GET | `/health` | none | DEP runc state (the body reports `running`/`status` from the runc list output; activation status is tracked by the `dante_data/activation/.activated` flag — surfaced once the validator follow-up lands) |
+| GET | `/v1/devices` | gateway JWT (`dante:read`) | List Dante peers visible on this endpoint |
+| GET | `/v1/routes` | gateway JWT (`dante:read`) | Current subscriptions |
+| POST | `/v1/subscribe` | gateway JWT (`dante:write`) | `{local_rx_channel: uint32, remote_channel: string, remote_device: string}` |
+| POST | `/v1/unsubscribe` | gateway JWT (`dante:write`) | `{local_rx_channel: uint32}` |
+
+> Field names mirror `adapter/cmd/bridge/main.go::subscribeReq` — the runc-side `dante_routing_cli subscribe` invocation needs the local RX channel index plus the upstream `channel@device` qualifier, which is why subscribe carries all three keys and unsubscribe carries only the local index.
 
 JWT validation is currently base64-decode + scope-check pending a `jose/v2`-backed JWKS verifier (lifted into `internal/auth` post-MVP). Today's posture: zero-trust gateway issues short-lived tokens, but the cryptographic signature check is **deferred to follow-on PR**. Do not promote this to a production gateway route until that lands.
 

@@ -64,6 +64,19 @@ func main() {
 	}
 	logger.Info("starting", "gateway_base", cfg.GatewayBase, "license_tier", cfg.LicenseTier)
 
+	// Defense-in-depth fail-closed guard: validateToken intentionally does NOT
+	// verify the JWT signature today (jose/v2 + JWKS verifier is the follow-on
+	// PR per README + PR description). On developer tier the gateway issues
+	// short-lived tokens and we sit behind a CF Worker — acceptable. On
+	// production tier this adapter MUST NOT be the trust boundary; refuse to
+	// start until the jwx/v2 verifier lands. Anything else would let a forged
+	// token pass scope-only checks (Sentry/CodeRabbit CRITICAL).
+	if isProdTier(cfg.LicenseTier) {
+		logger.Error("startup refused: production tier requires JWKS signature verification; tracking jwx/v2 integration",
+			"license_tier", cfg.LicenseTier)
+		os.Exit(1)
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
@@ -85,10 +98,16 @@ func main() {
 	// active-CPU billing per the protocol-plane x402-metering spec.
 	go runX402Heartbeat(ctx, cfg, logger)
 
+	// HTTP-server bind/start failure must propagate to process exit — logging
+	// only would leave the container "alive" without ever serving traffic, and
+	// CF Containers would keep it scheduled (silent outage). We share `ctx`
+	// from signal.NotifyContext above and call cancel() so the main goroutine
+	// drops through to graceful Shutdown. (CodeRabbit Major #1.)
 	go func() {
 		logger.Info("http listening", "addr", httpAddr)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("http server", "err", err)
+			logger.Error("http server bind/start failed; triggering shutdown", "err", err)
+			cancel()
 		}
 	}()
 
@@ -111,6 +130,15 @@ type Config struct {
 	jwksCacheMu   sync.RWMutex
 	jwksCacheData []byte
 	jwksCacheTs   time.Time
+}
+
+// isProdTier returns true when the license-tier env declares production posture.
+// We accept several spellings to be friendly to operators ("prod", "production",
+// "live"). The fail-closed startup guard in main() uses this to refuse to boot
+// until JWKS signature verification lands. See main.go startup block.
+func isProdTier(tier string) bool {
+	t := strings.ToLower(strings.TrimSpace(tier))
+	return t == "prod" || t == "production" || t == "live"
 }
 
 func loadConfig() (*Config, error) {
@@ -258,7 +286,22 @@ func handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func handleRoutes(w http.ResponseWriter, _ *http.Request) {
+// allowGetOnly returns true and lets the caller proceed, or writes 405 with an
+// Allow: GET header and returns false. Keeps the method-guard one-liner at the
+// top of each list handler. (CodeRabbit Minor #2.)
+func allowGetOnly(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "method_not_allowed", http.StatusMethodNotAllowed)
+		return false
+	}
+	return true
+}
+
+func handleRoutes(w http.ResponseWriter, r *http.Request) {
+	if !allowGetOnly(w, r) {
+		return
+	}
 	cmd := exec.Command("./runc", "exec", depContainerTag, "/dante/dante_routing_cli", "list", "--json")
 	cmd.Dir = depWorkingDir
 	out, err := cmd.Output()
@@ -270,7 +313,10 @@ func handleRoutes(w http.ResponseWriter, _ *http.Request) {
 	relayJSON(w, out, "routes")
 }
 
-func handleDevices(w http.ResponseWriter, _ *http.Request) {
+func handleDevices(w http.ResponseWriter, r *http.Request) {
+	if !allowGetOnly(w, r) {
+		return
+	}
 	cmd := exec.Command("./runc", "exec", depContainerTag, "/dante/dante_browse", "--json")
 	cmd.Dir = depWorkingDir
 	out, err := cmd.Output()
@@ -444,13 +490,25 @@ func runX402Heartbeat(ctx context.Context, cfg *Config, logger *slog.Logger) {
 			if !state.Running {
 				continue // no active billable workload
 			}
-			body, _ := json.Marshal(map[string]any{
+			// Surface marshal + request-construction errors before touching `req`.
+			// A malformed WAVE_GATEWAY_BASE would otherwise leave req=nil and the
+			// subsequent req.Header.Set panic the heartbeat goroutine, taking
+			// metering offline silently. (Sentry CRITICAL + CodeRabbit Major #3.)
+			body, err := json.Marshal(map[string]any{
 				"protocol":     "dante",
 				"container_id": cfg.ContainerID,
 				"ts":           time.Now().Unix(),
 				"active_ms":    int(x402HeartbeatHz / time.Millisecond),
 			})
-			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, meterURL, strings.NewReader(string(body)))
+			if err != nil {
+				logger.Warn("x402 marshal failed; skipping heartbeat", "err", err)
+				continue
+			}
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, meterURL, strings.NewReader(string(body)))
+			if err != nil {
+				logger.Warn("x402 request build failed; skipping heartbeat", "err", err, "meter_url", meterURL)
+				continue
+			}
 			req.Header.Set("content-type", "application/json")
 			req.Header.Set("x-wave-license-tier", cfg.LicenseTier)
 			resp, err := client.Do(req)
