@@ -22,11 +22,14 @@ export interface ContainerBinding {
 }
 
 export interface BridgeEnv {
-	/** Default-OFF activation flag. Unset/"false" = honest 501. Flipping to "true" only takes effect
-	 *  when SRT_BRIDGE is also bound — otherwise it still fail-closes to 501 (no fake transport). */
+	/** Default-OFF activation flag. Unset/"false" = honest 501 for every protocol. Flipping to "true"
+	 *  only takes effect when the matching per-protocol binding is ALSO present — otherwise each route
+	 *  still fail-closes to its typed 501 (no fake transport on any protocol). */
 	BRIDGE_FORWARD_ENABLED?: string;
 	/** CF Container binding for the SRT↔MoQ bridge. Absent today (image unpushed + Containers off). */
 	SRT_BRIDGE?: ContainerBinding;
+	/** CF Container binding for the NDI↔MoQ bridge. Absent today (license-gated #169 + image unpushed). */
+	NDI_BRIDGE?: ContainerBinding;
 }
 
 /** Seconds a client should wait before retrying — activation is operator-gated, not transient. */
