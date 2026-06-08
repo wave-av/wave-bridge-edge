@@ -89,11 +89,12 @@ describe("SRT forward shape — fail-closed, never fabricates transport", () => 
 
 describe("other routes are unaffected", () => {
 	it("an unimplemented protocol still returns the generic BRIDGE_NOT_IMPLEMENTED 501", async () => {
-		const res = await call(new Request("https://bridge.wave.online/ndi/whatever"));
+		// /ndi now has its own typed handler (ndi.spec.ts) — pick a protocol that doesn't yet.
+		const res = await call(new Request("https://bridge.wave.online/dante/whatever"));
 		expect(res.status).toBe(501);
 		const body = (await res.json()) as Record<string, unknown>;
 		expect(body.error).toBe("BRIDGE_NOT_IMPLEMENTED");
-		expect(body.protocol).toBe("ndi");
+		expect(body.protocol).toBe("dante");
 	});
 
 	it("/health stays healthy", async () => {

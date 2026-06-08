@@ -9,16 +9,17 @@ type = "plain_text"
 name = "FOUNDATION_VERSION"
 text = "v1.5.0"
 
-# SRT activation flag — DEFAULT OFF. The /srt route (src/srt.ts) returns an honest typed 501
-# (`not_activated`) until BOTH of these are true:
-#   1. the [[containers]] srt-bridge binding below is provisioned (binding name MUST be SRT_BRIDGE), AND
+# Shared activation flag — DEFAULT OFF. ALL protocol routes (src/srt.ts, src/ndi.ts, …) return an
+# honest typed 501 (`not_activated`) until BOTH of these are true for the matching protocol:
+#   1. the [[containers]] binding below is provisioned (binding name MUST match what src/<proto>.ts reads), AND
 #   2. BRIDGE_FORWARD_ENABLED = "true".
-# Even with the flag flipped, the code FAIL-CLOSES to 501 unless the SRT_BRIDGE binding exists — so this
-# flag is inert (never fabricates transport) until the operator completes activation.
+# Even with the flag flipped, each handler FAIL-CLOSES to its typed 501 unless its specific binding
+# exists — so this flag is inert (never fabricates transport) until the operator completes activation
+# for that specific protocol.
 [vars]
 BRIDGE_FORWARD_ENABLED = "false"
 
-# Container binding — populated when Wave-1 SRT spike provisions. OPERATOR-GATED: requires the
+# SRT container binding — populated when Wave-1 SRT spike provisions. OPERATOR-GATED: requires the
 # containers/srt image to be built+pushed (currently 0.0.0-scaffold, UNPUBLISHED) AND CF Containers
 # enabled on the account. The binding name MUST be SRT_BRIDGE (src/srt.ts reads env.SRT_BRIDGE).
 # [[containers]]
@@ -26,3 +27,15 @@ BRIDGE_FORWARD_ENABLED = "false"
 # binding = "SRT_BRIDGE"
 # image = "docker.io/wave-av/wave-srt-bridge:0.0.0-scaffold"
 # instance_type = "standard"  # or "lite" / "max" per active-CPU economics
+
+# NDI container binding — Wave-2 NDI bridge (NDI 6 Discovery Server + Go adapter that bridges to MoQ).
+# OPERATOR-GATED ON THREE FRONTS (one more than SRT): the containers/ndi image is unpushed AND CF
+# Containers is off AND Vizrt NDI Advanced SDK redistribution clause is unresolved (#169 NDI Developer
+# Program). `libndi_advanced` is NEVER bundled into the image — the adapter fetches it at runtime from
+# a Vizrt-authorized URL once licensing clears. The binding name MUST be NDI_BRIDGE (src/ndi.ts reads
+# env.NDI_BRIDGE).
+# [[containers]]
+# name = "ndi-bridge"
+# binding = "NDI_BRIDGE"
+# image = "docker.io/wave-av/wave-ndi-bridge:0.0.0-scaffold"
+# instance_type = "standard"  # NDI 6 HDR + WAN discovery ≈ standard tier

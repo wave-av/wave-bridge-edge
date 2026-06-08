@@ -1,8 +1,9 @@
 // wave-bridge-edge — routes protocol traffic from the gateway to the right
-// CF Container. Scaffolded for Wave-1 SRT spike; the SRT route returns a typed,
-// honest 501 (`not_activated`) until the container image + CF Containers land;
+// CF Container. Scaffolded for Wave-1 SRT spike; SRT and NDI both return a typed,
+// honest 501 (`not_activated`) until their container images + CF Containers land;
 // every other protocol returns the generic 501. No route fabricates transport.
 import { handleSrt, type BridgeEnv } from "./srt";
+import { handleNdi } from "./ndi";
 
 export default {
 	async fetch(request: Request, env: BridgeEnv): Promise<Response> {
@@ -29,6 +30,10 @@ export default {
 		if (url.pathname === "/srt" || url.pathname.startsWith("/srt/")) {
 			return handleSrt(request, env);
 		}
+		// NDI route. Same honest-501 contract as /srt, gated additionally on Vizrt redistribution (#169).
+		if (url.pathname === "/ndi" || url.pathname.startsWith("/ndi/")) {
+			return handleNdi(request, env);
+		}
 		// All other protocols are not implemented yet — generic honest 501.
 		return Response.json(
 			{ error: "BRIDGE_NOT_IMPLEMENTED", protocol: url.pathname.split("/")[1] ?? "unknown" },
@@ -41,10 +46,12 @@ export default {
 // autonomous agents fetch first. This bridge is early scaffold; said so honestly.
 const LLMS_TXT = `# WAVE — Bridge Edge
 > Any-to-any broadcast-protocol bridge (Layer 2 of the WAVE Protocol Plane). EARLY scaffold: routes
-> Worker traffic to CF Containers running native protocol binaries (SRT spike first; NDI/OMT/Dante
-> planned, license-gated). ALL protocol routes currently return 501 — none are live or metered yet.
+> Worker traffic to CF Containers running native protocol binaries (SRT + NDI typed today; OMT/Dante
+> still on the generic 501). ALL protocol routes currently return 501 — none are live or metered yet.
 > /srt returns a typed 501 "not_activated" (scope srt:read|srt:write) until the container image is
-> pushed and CF Containers is enabled. Part of WAVE — the open video API for people and AI agents.
+> pushed and CF Containers is enabled. /ndi returns the same typed 501 (scope ndi:read|ndi:write)
+> additionally gated on Vizrt NDI Advanced SDK redistribution clearance (#169). Part of WAVE — the
+> open video API for people and AI agents.
 
 ## Start here
 - Product: https://bridge.wave.online
