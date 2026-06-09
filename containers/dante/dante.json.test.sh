@@ -13,7 +13,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TEMPLATE="${HERE}/dante.json.template"
-OUT="$(mktemp -t dante-json.XXXXXX.json)"
+export OUT="$(mktemp -t dante-json.XXXXXX.json)"
 trap 'rm -f "${OUT}"' EXIT
 
 if [ ! -f "${TEMPLATE}" ]; then
@@ -32,7 +32,7 @@ WAVE_DANTE_WS_PORT="${WAVE_DANTE_WS_PORT:-49999}" \
   envsubst < "${TEMPLATE}" > "${OUT}"
 
 # 1. Must parse as JSON (catches missing closing brace, stray substitution, etc.).
-python3 -c "import json, sys; json.load(open('${OUT}'))" || {
+python3 -c "import json, sys; json.load(open(sys.argv[1]))" "${OUT}" || {
   echo "FAIL: rendered output is not valid JSON. Body:" >&2
   cat "${OUT}" >&2
   exit 1

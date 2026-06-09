@@ -155,7 +155,7 @@ EXPOSE 8080
 # the adapter is up; the body distinguishes "ready" from "DEP-not-running" so
 # CF Containers can route traffic away from a half-booted instance.
 # Trivy DS-0026 / Checkov CKV_DOCKER_2.
-HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=15s --timeout=3s --start-period=35s --retries=3 \
   CMD curl --fail --silent --show-error --max-time 2 http://127.0.0.1:8080/health \
       > /dev/null || exit 1
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
