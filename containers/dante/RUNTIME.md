@@ -27,7 +27,7 @@ This document defines what the WAVE Dante Bridge container needs at runtime to a
 | `WAVE_AUDINATE_LICENSE_KEY` | ✅ yes | — | Per-endpoint license key issued by Audinate Sales. Must match the `manfId`+`modelId` pair baked into `dante.json` for activation to succeed. Time-based (daily/monthly/yearly) per Connect SDK posture — needs refresh cadence. |
 | `WAVE_GATEWAY_BASE` | no | `https://api.wave.online` | Gateway base URL for x402 metering heartbeats + observability emission. |
 | `WAVE_GATEWAY_JWKS_URL` | no | `https://api.wave.online/.well-known/jwks.json` | Where this container fetches the gateway's JWKS for inbound JWT validation. |
-| `WAVE_AUDINATE_LICENSE_TIER` | no | `developer` | Tier label emitted on x402 heartbeats. **In `production`, the adapter fail-closes at startup** until JWKS signature verification ships (see `main.go::isProdTier`). This is a placeholder until JWT validation is implemented.
+| `WAVE_AUDINATE_LICENSE_TIER` | no | `developer` | Tier label emitted on x402 heartbeats. **In `production`, the adapter fail-closes at startup** until JWKS signature verification ships (see `main.go::isProdTier`). This is a placeholder until JWT validation is implemented. **The adapter currently does not fetch JWKS or verify JWT signatures.**
 | `WAVE_DANTE_IFACE` | no | `eth0` | NIC name inside the container network namespace. CF Containers default is `eth0`; AWS EC2 example uses `ens5`. |
 | `WAVE_DANTE_WS_PORT` | no | `49999` | Websocket port the CLI Dante Activator uses to reach DEP. Pinning this skips device discovery and makes the activate call deterministic. |
 | `DEP_BOOT_TIMEOUT_S` | no | `30` | Seconds the entrypoint waits for the `dante` runc container to appear in `runc list` before refusing to start the adapter (fail-fast). |
