@@ -15,7 +15,7 @@
 //     AND CF Containers is enabled AND (b) the redistribution clause clears (#169). No dormant fake
 //     success path exists.
 //
-// Trust model (see threat-model.md): bridge.wave.online sits BEHIND wave-gateway. The gateway runs
+// Trust model (see threat-model.md): bridge.wave.online sits BEHIND wave-gateway. The gateway runs  // # guard:allow architecture-doc
 // authorize → scope(ndi:read|ndi:write) → entitlement → meter, then forwards with x-wave-org /
 // x-wave-tier attribution headers. This worker is the origin; it makes NO access decision of its own.
 
@@ -24,7 +24,7 @@ import type { BridgeEnv } from "./srt";
 /** Seconds a client should wait before retrying — activation is operator-gated, not transient. */
 const NDI_RETRY_AFTER_SECONDS = 86_400; // 24h: this is a productization gate, not a blip.
 
-/** Canonical gateway scopes for this protocol (wave-gateway scopes.ts rw("ndi"), PR #71 / #281).
+/** Canonical gateway scopes for this protocol (wave-gateway scopes.ts rw("ndi"), PR #71 / #281).  // # guard:allow architecture-doc
  *  GET/HEAD → ndi:read, mutating verbs → ndi:write. NOT "ndi:stream" — read/write is the vocabulary. */
 const NDI_SCOPES = { read: "ndi:read", write: "ndi:write" } as const;
 
