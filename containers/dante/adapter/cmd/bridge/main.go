@@ -129,13 +129,10 @@ func main() {
 
 type Config struct {
 	GatewayBase   string
-	JWKSURL       string
-	LicenseTier   string
-	LicenseKey    string // never logged; only sent in the activation flow
-	ContainerID   string // populated from /proc/1/cpuset on CF Containers; "local" otherwise
-	jwksCacheMu   sync.RWMutex
-	jwksCacheData []byte
-	jwksCacheTs   time.Time
+        JWKSURL       string
+        LicenseTier   string
+        LicenseKey    string // never logged; only sent in the activation flow
+        ContainerID   string // populated from /proc/1/cpuset on CF Containers; "local" otherwise
 }
 
 // isProdTier returns true when the license-tier env declares production posture.
