@@ -1,0 +1,20 @@
+# wave-bridge-edge / .semgrepignore — documented semgrep exceptions.
+# Each entry MUST be paired with a comment explaining why.
+# Review at every release; remove entries that no longer apply.
+
+# containers/dante/Dockerfile intentionally runs as root.
+# DEP's runc bundle requires CAP_SYS_ADMIN to manage cgroups + network
+# namespaces for the nested 'dante' runc container. The Go adapter is
+# privilege-sensitive (it never touches the network namespace setup) but
+# lives at PID 2 under the same uid because runc needs to fork it from the
+# entrypoint that already has the necessary capabilities. Dropping uid here
+# would break `runc list` / `runc start`.
+#
+# Defense-in-depth: the Cloudflare Containers runtime drops capabilities at
+# the host level beyond what we declare in the deployment manifest, so a
+# compromise inside the container cannot escape the CF sandbox.
+#
+# Rule: dockerfile.security.missing-user-entrypoint.missing-user-entrypoint
+# CWE-269 — Improper Privilege Management. Acknowledged + documented; the
+# inline security-note comment block in the Dockerfile itself mirrors this.
+containers/dante/Dockerfile
