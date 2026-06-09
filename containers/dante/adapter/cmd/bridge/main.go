@@ -86,6 +86,12 @@ func main() {
 	mux.HandleFunc("/v1/unsubscribe", cfg.requireScope("dante:write")(handleUnsubscribe))
 	mux.HandleFunc("/v1/routes", cfg.requireScope("dante:read")(handleRoutes))
 	mux.HandleFunc("/v1/devices", cfg.requireScope("dante:read")(handleDevices))
+	// /v1/admin/dante/enroll — WAVE control-plane → this container, hands over the
+	// DDM (Dante Domain Manager) coordinates so the SDK device can be enrolled into
+	// a Connect-solution domain. Until DDM is wired (task #231 + #233), this is an
+	// honest 501 carrying the same shape the future call will accept — so callers can
+	// integrate against the contract today without us pretending the activation works.
+	mux.HandleFunc("/v1/admin/dante/enroll", cfg.requireScope("dante:admin")(handleEnroll))
 
 	server := &http.Server{
 		Addr:              httpAddr,
@@ -470,6 +476,80 @@ func base64StdDecode(s string) ([]byte, error) {
 		}
 	}
 	return out, nil
+}
+
+// ── DDM enrollment surface (honest 501 until #231/#233 wire DDM) ─────────────
+
+// enrollReq is the contract WAVE's control plane will POST when it wants this
+// container to enroll into a Dante Domain Manager (DDM) domain. We capture the
+// shape now so callers can integrate against a real schema; the DDM-side call
+// itself is wired once we have DDM installed (Audinate Sales-coordinated per
+// the Dante SDK Connect Edition Getting Started page).
+type enrollReq struct {
+	// DDMURL is the address of the Dante Domain Manager instance this container
+	// should enroll into. Typically https://ddm.<customer-domain>:port.
+	DDMURL string `json:"ddm_url"`
+	// DomainID identifies the Dante domain within DDM that this container's
+	// channels will participate in.
+	DomainID string `json:"domain_id"`
+	// EnrollmentToken is the short-lived credential DDM issues to authorize this
+	// specific container's enrollment. Single-use, time-bound per DDM policy.
+	EnrollmentToken string `json:"enrollment_token"`
+}
+
+func handleEnroll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method_not_allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req enrollReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid_body", http.StatusBadRequest)
+		return
+	}
+	// Minimal shape validation so callers see schema errors today rather than
+	// finding out only when DDM is wired. Empty values are typed validation,
+	// not behavioral — we don't redact them from the response (operator-facing).
+	missing := []string{}
+	if req.DDMURL == "" {
+		missing = append(missing, "ddm_url")
+	}
+	if req.DomainID == "" {
+		missing = append(missing, "domain_id")
+	}
+	if req.EnrollmentToken == "" {
+		missing = append(missing, "enrollment_token")
+	}
+	if len(missing) > 0 {
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":  "missing_required_fields",
+			"fields": missing,
+		})
+		return
+	}
+	// Honest 501: shape is valid, DDM integration is the follow-up. Mirrors the
+	// /ndi pattern in src/ndi.ts on the bridge worker — typed failure with the
+	// blockers caller-visible.
+	w.Header().Set("content-type", "application/json")
+	w.WriteHeader(http.StatusNotImplemented)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error":    "DDM_ENROLLMENT_NOT_WIRED",
+		"protocol": "dante",
+		"status":   "not_implemented",
+		"received": map[string]string{
+			"ddm_url":   req.DDMURL,
+			"domain_id": req.DomainID,
+		},
+		"blockers": []string{
+			"DDM installation + URL allocation (Audinate Sales coordinates per Connect SDK docs)",
+			"DDM enrollment API client (task #233)",
+			"CF Containers ↔ AWS EC2 networking compat verification (task #231)",
+		},
+		"docs": "https://bridge.wave.online/llms.txt",
+	})
 }
 
 // ── x402 metering heartbeat ──────────────────────────────────────────────────

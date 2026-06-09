@@ -67,12 +67,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # the subsequent step (Hadolint DL4006).
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# Local-artifact mode: if a tarball is available in the build context (Jake
+# drops it at ~/.wave/dante-sdk/<file> + the build script COPYs it in under a
+# known name), use it instead of fetching from dev.audinate.com. This bypasses
+# the Auth0/DNA-Portal cookie dependency for builds where the operator has
+# already downloaded the SDK. The SHA256 pin still gates either path so a
+# wrong/tampered tarball fails-close.
+#
+# Toggle via --build-arg DEP_LOCAL_TARBALL=dep-1.5.4.3-x86_64.tar.gz at build
+# time. When unset (default), the URL fetch path runs.
+ARG DEP_LOCAL_TARBALL=""
+
+# Stage the local tarball into a stable path (no-op when DEP_LOCAL_TARBALL is empty).
+# COPY accepts a wildcard so a missing source file doesn't break the build when
+# the operator opts for the URL path. The dep-fetch stage below detects presence
+# via `test -s`.
+COPY --chmod=0444 ${DEP_LOCAL_TARBALL:-Dockerfile} /tmp/dep-local-tarball
+
 RUN --mount=type=secret,id=dna_cookie,target=/run/secrets/dna_cookie \
     set -eu; \
-    curl --fail --silent --show-error --location \
-      --cookie /run/secrets/dna_cookie \
-      -o /tmp/dep.tgz \
-      "${DEP_URL}"; \
+    if [ -s /tmp/dep-local-tarball ] && [ -n "${DEP_LOCAL_TARBALL}" ]; then \
+      echo "DEP fetch: local artifact (${DEP_LOCAL_TARBALL})"; \
+      cp /tmp/dep-local-tarball /tmp/dep.tgz; \
+    else \
+      echo "DEP fetch: ${DEP_URL}"; \
+      curl --fail --silent --show-error --location \
+        --cookie /run/secrets/dna_cookie \
+        -o /tmp/dep.tgz \
+        "${DEP_URL}"; \
+    fi; \
     actual=$(sha256sum /tmp/dep.tgz | cut -d' ' -f1); \
     if [ "${actual}" != "${DEP_SHA256}" ]; then \
       echo "DEP SHA256 mismatch: expected ${DEP_SHA256}, got ${actual}" >&2; \
@@ -80,7 +103,7 @@ RUN --mount=type=secret,id=dna_cookie,target=/run/secrets/dna_cookie \
     fi; \
     mkdir -p /opt; \
     tar -xzf /tmp/dep.tgz -C /opt; \
-    rm /tmp/dep.tgz; \
+    rm /tmp/dep.tgz /tmp/dep-local-tarball; \
     test -d /opt/dep/dante_package; \
     test -x /opt/dep/dante_package/runc; \
     test -x /opt/dep/dante_package/dep.sh; \
@@ -150,9 +173,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 # the host level beyond what we declare in the deployment manifest, so a
 # compromise inside the container can't escape the CF sandbox.
 #
-# nosemgrep: dockerfile.security.missing-user-entrypoint.missing-user-entrypoint
-#
 # tini -- entrypoint.sh: tini becomes PID 1 (reaps DEP's children); entrypoint
 # brings up the Dante container, then execs the Go adapter so the adapter sits
 # at PID 2 (still gets SIGTERM from Cloudflare Containers shutdown).
+#
+# nosemgrep: dockerfile.security.missing-user-entrypoint.missing-user-entrypoint
 ENTRYPOINT ["/usr/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]
