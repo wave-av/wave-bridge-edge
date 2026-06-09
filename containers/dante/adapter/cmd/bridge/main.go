@@ -205,7 +205,7 @@ type depState struct {
 }
 
 func depRunState() depState {
-	cmd := exec.Command("./runc", "list", "-f", "json")
+cmd := exec.CommandContext(context.Background(), "./runc", "list", "-f", "json")
 	cmd.Dir = depWorkingDir
 	out, err := cmd.Output()
 	if err != nil {
