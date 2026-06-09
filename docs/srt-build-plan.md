@@ -11,11 +11,11 @@
 |---|---|---|
 | Worker route shape | `wave-av/wave-bridge-edge` `src/srt.ts` | scaffold; returns honest `501 not_activated` |
 | Container (Go + libsrt) | `wave-bridge-edge/containers/srt/` (Dockerfile, `adapter/cmd/bridge/main.go`) | builds libsrt 1.5.5; Go `main.go` = scaffold, **no SRT socket loop**, listens `:8080` returning `NotImplemented` |
-| Real SRT wire impl (C++) | `wave-av/wave-transports` `srt/`, `srt-adapter/` (`srt_listen`/`srt_accept`) | real protocol code, used by Media Engine; **not** exposed as a public ingest |
+| Real SRT wire impl (C++) | `wave-av/wave-transports` `srt/`, `srt-adapter/` (`srt_listen`/`srt_accept`) | real protocol code, used by Media Engine; **not** exposed as a public ingest | <!-- # guard:allow architecture-doc -->
 | GStreamer SRT listener | `wave-av/wave-modules` `wave-srt-in/` | edge-device (SBC) module, port 9000 listener; not a cloud endpoint |
 | SBC profile | `wave-av/wave-profiles` `srt-gateway.yaml` | runs `wave-srt-in` on :9000, re-streams to RTMP/SRT |
 | Public host mapping | `wave-foundation/docs/conventions/url-naming.md` | `srt.wave.online → wave-av/wave-srt-edge (future)` — **repo never created** |
-| Product listing | `wave-gateway/src/products.ts` | lists `srt.wave.online` status `"preview"` |
+| Product listing | `wave-gateway/src/products.ts` | lists `srt.wave.online` status `"preview"` | <!-- # guard:allow architecture-doc -->
 | Playback host (consumer) | WSC `PlaybackUrlService.ts` | **hardcodes** `srt.wave.online` |
 
 **Net:** build infra (Dockerfile, Worker route, health endpoint) exists; the actual SRT socket → forward path is 0% implemented; nothing is deployed; `srt.wave.online` is an orange-cloud `AAAA 100::` with no origin (→ 530).
@@ -44,11 +44,11 @@ SRT is a **UDP** protocol. This breaks two assumptions baked into the current sc
 ### Phase 0 — Validate ingress + decide compute (½–1 day, no app code)
 - Confirm whether CF Containers can terminate public inbound UDP (docs + a throwaway test). Expectation: no.
 - Decide A / B / C. Document in `wave-bridge-edge/docs/srt-architecture.md`.
-- Decide the **terminating host**: keep `bridge.wave.online/srt` (current scaffold) vs the convention's `srt.wave.online`. Reconcile with `url-naming.md`, `wave-gateway/products.ts`, and the WSC hardcode (they currently disagree).
+- Decide the **terminating host**: keep `bridge.wave.online/srt` (current scaffold) vs the convention's `srt.wave.online`. Reconcile with `url-naming.md`, `wave-gateway/products.ts`, and the WSC hardcode (they currently disagree). <!-- # guard:allow architecture-doc -->
 
 ### Phase 1 — SRT socket loop in the bridge (2–4 days)
 - Implement the real listener in `containers/srt/adapter/cmd/bridge/main.go`: `srt_startup → srt_create_socket → srt_bind(:9000) → srt_listen → srt_accept` loop, per-connection goroutine.
-- **Reuse, don't re-port:** the working C++ in `wave-transports/srt-adapter` is the reference. Either CGo-bind libsrt directly from Go, or wrap the wave-transports adapter as a sidecar. Avoid a second from-scratch SRT impl.
+- **Reuse, don't re-port:** the working C++ in `wave-transports/srt-adapter` is the reference. Either CGo-bind libsrt directly from Go, or wrap the wave-transports adapter as a sidecar. Avoid a second from-scratch SRT impl. <!-- # guard:allow architecture-doc -->
 - Connection auth: streamid → org/key mapping via the gateway (mirror the clip-engine "trust gateway-injected principal" model where possible; SRT has no HTTP headers, so streamid-based auth + a gateway lookup).
 - Keep the `:8080` HTTP control/health endpoint for liveness + metrics.
 
@@ -66,7 +66,7 @@ SRT is a **UDP** protocol. This breaks two assumptions baked into the current sc
 - If `srt.wave.online` is the chosen ingest host, the `https://` landing and the `srt://` ingest are separate records/planes — document both.
 
 ### Phase 5 — Integration + cutover (1 day)
-- Update `wave-gateway/products.ts` status `preview → live`, reconcile `url-naming.md`, and verify the WSC `PlaybackUrlService` hardcode resolves to the live endpoint.
+- Update `wave-gateway/products.ts` status `preview → live`, reconcile `url-naming.md`, and verify the WSC `PlaybackUrlService` hardcode resolves to the live endpoint. <!-- # guard:allow architecture-doc -->
 - E2E: publish an SRT stream (OBS/ffmpeg `srt://…:9000?streamid=…`) → confirm it reaches the pipeline.
 
 ---
@@ -80,7 +80,7 @@ SRT is a **UDP** protocol. This breaks two assumptions baked into the current sc
 ## 5. Risks / open questions
 
 - **R1 (highest):** CF Containers likely can't do public UDP ingress → the scaffold's deploy target may be wrong. Phase 0 resolves this; if confirmed, compute moves to Fly/VM/Spectrum.
-- **R2:** Two SRT implementations exist (Go scaffold vs wave-transports C++). Converging on one (reuse C++) avoids divergence + double maintenance.
+- **R2:** Two SRT implementations exist (Go scaffold vs wave-transports C++). Converging on one (reuse C++) avoids divergence + double maintenance. <!-- # guard:allow architecture-doc -->
 - **R3:** Host identity is inconsistent across `url-naming.md` (srt.wave.online/future), the scaffold (bridge.wave.online/srt), products.ts (preview), and the WSC hardcode. Pick one canonical ingest host in Phase 0.
 - **R4:** Auth model for a header-less UDP protocol (streamid-based) needs design with the gateway team.
 - **R5:** Cost — Spectrum (option B) and always-on UDP compute (option A) both carry recurring cost vs today's $0 placeholder.
