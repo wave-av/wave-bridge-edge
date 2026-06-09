@@ -58,7 +58,7 @@ log "starting DEP runc container (DEP_VERSION=$(cat version 2>/dev/null || echo 
 # = degraded forever, defeating CF Containers' restart-on-fail.
 DEP_BOOT_TIMEOUT_S="${DEP_BOOT_TIMEOUT_S:-30}"
 deadline=$(( $(date +%s) + DEP_BOOT_TIMEOUT_S ))
-while ! ./runc list 2>/dev/null | grep -qw dante; do
+while ! ./runc list 2>&1 | grep -qw dante; do
   if [ "$(date +%s)" -ge "${deadline}" ]; then
     log "ERROR: DEP container 'dante' did not appear in runc list within ${DEP_BOOT_TIMEOUT_S}s; refusing to start adapter"
     # Kill any straggler dep.sh children so CF Containers gets a clean exit.
