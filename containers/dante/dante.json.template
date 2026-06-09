@@ -16,10 +16,10 @@
   },
 
   "network": {
-    "_comment_": "interfaces is the Linux NIC name inside the container's net namespace — on Cloudflare Containers this is typically eth0 (vs the 'ens5' example in the docs, which is AWS EC2 ENI naming). webSocketPort is explicit so the CLI Dante Activator doesn't fall back to discovery (Activator can reach DEP directly).",
+    "_comment_": "interfaces is the Linux NIC name inside the container's net namespace — on Cloudflare Containers this is typically eth0 (vs the 'ens5' example in the docs, which is AWS EC2 ENI naming). webSocketPort is explicit so the CLI Dante Activator doesn't fall back to discovery (Activator can reach DEP directly). NOTE: envsubst only supports plain ${VAR} substitution — defaults are set by entrypoint.sh (or dante.json.test.sh) BEFORE the substitution runs, not via ${VAR:-default} shell-default syntax (which envsubst emits literally and breaks JSON parsing).",
     "interfaceMode": "Direct",
-    "interfaces": ["${WAVE_DANTE_IFACE:-eth0}"],
+    "interfaces": ["${WAVE_DANTE_IFACE}"],
     "preferredLinkSpeed": "LINK_SPEED_1G",
-    "webSocketPort": ${WAVE_DANTE_WS_PORT:-49999}
+    "webSocketPort": ${WAVE_DANTE_WS_PORT}
   }
 }
