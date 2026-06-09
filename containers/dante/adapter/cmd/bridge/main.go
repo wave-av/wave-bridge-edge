@@ -414,7 +414,7 @@ func (cfg *Config) validateToken(_ context.Context, token, required string) (boo
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return false, fmt.Errorf("parse claims: %w", err)
 	}
-if claims.Exp != 0 && time.Now().Unix() > claims.Exp {
+if claims.Exp > 0 && time.Now().Unix() > claims.Exp {
 		return false, errors.New("expired")
 	}
 	for _, s := range strings.Fields(claims.Scope) {
