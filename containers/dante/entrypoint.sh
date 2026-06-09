@@ -20,6 +20,27 @@ log() { printf '%s %s\n' "${LOG_PREFIX}" "$*" >&2; }
 : "${WAVE_GATEWAY_JWKS_URL:=https://api.wave.online/.well-known/jwks.json}"
 : "${WAVE_GATEWAY_BASE:=https://api.wave.online}"
 
+# ── dante.json generation ───────────────────────────────────────────────────
+# Per the Dante SDK Connect Edition Getting Started page, DEP reads `dante.json`
+# from its installation directory at activation/start. We carry the WAVE
+# product identity + network shape in `dante.json.template` (committed in this
+# repo) and envsubst at boot so the interface name + websocket port can be
+# overridden per deployment without rebuilding the image. The manfId/modelId
+# pair MUST match the WAVE_AUDINATE_LICENSE_KEY — they're hard-coded in the
+# template since the license key issuance is paired to those exact values
+# (see README "License posture").
+DANTE_JSON_TEMPLATE="/usr/local/share/wave/dante.json.template"
+DANTE_JSON="${DEP_DIR}/dante.json"
+
+if [ -f "${DANTE_JSON_TEMPLATE}" ]; then
+  log "rendering dante.json from template (WAVE_DANTE_IFACE=${WAVE_DANTE_IFACE:-eth0}, WAVE_DANTE_WS_PORT=${WAVE_DANTE_WS_PORT:-49999})"
+  WAVE_DANTE_IFACE="${WAVE_DANTE_IFACE:-eth0}" \
+  WAVE_DANTE_WS_PORT="${WAVE_DANTE_WS_PORT:-49999}" \
+  envsubst < "${DANTE_JSON_TEMPLATE}" > "${DANTE_JSON}"
+else
+  log "WARNING: dante.json template missing at ${DANTE_JSON_TEMPLATE}; DEP will fall back to its own defaults (channel-zero device until enrolled in DDM)"
+fi
+
 # ── DEP startup ─────────────────────────────────────────────────────────────
 cd "${DEP_DIR}"
 

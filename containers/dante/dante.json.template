@@ -1,0 +1,25 @@
+{
+  "_comment_": "DEP runtime config (Dante SDK Connect Edition). Per dev.audinate.com 'Getting Started': product.modelId + license-key + DDM enrollment are the three legs of the activation tripod. envsubst this template at boot from entrypoint.sh.",
+
+  "product": {
+    "_comment_": "manfId is Audinate-assigned + unique-per-ISV (provided to WAVE Online LLC via DNA Portal). modelId is OUR call — 64-bit, 16 hex digits, unique across all our DEP-based products; MUST be registered with Audinate Sales before requesting a license key.",
+    "manfId": "0x31313234313139",
+    "manfName": "WAVE Online",
+    "modelId": "0x5741564542524447",
+    "modelName": "WAVE Dante Bridge",
+    "modelVersion": {
+      "major": 1,
+      "minor": 0,
+      "bugfix": 0
+    },
+    "devicePrefix": "wave-"
+  },
+
+  "network": {
+    "_comment_": "interfaces is the Linux NIC name inside the container's net namespace — on Cloudflare Containers this is typically eth0 (vs the 'ens5' example in the docs, which is AWS EC2 ENI naming). webSocketPort is explicit so the CLI Dante Activator doesn't fall back to discovery (Activator can reach DEP directly).",
+    "interfaceMode": "Direct",
+    "interfaces": ["${WAVE_DANTE_IFACE:-eth0}"],
+    "preferredLinkSpeed": "LINK_SPEED_1G",
+    "webSocketPort": ${WAVE_DANTE_WS_PORT:-49999}
+  }
+}

@@ -13,16 +13,20 @@ Layer 2 of the [WAVE Protocol Plane](https://github.com/wave-av/wave-foundation/
 
 The two run in the same outer container but in different process trees — `tini` is PID 1, `entrypoint.sh` starts DEP via `dep.sh start &` (which forks `runc`), then `exec`s the Go adapter so the adapter takes PID 2 and receives Cloudflare Containers' SIGTERM directly on shutdown.
 
-## License posture
+## License posture (Dante SDK Connect Edition — corrected 2026-06-08)
 
-- **DEP runtime bundle** — fetched at build-time from `dev.audinate.com` via the buildkit secret-mount cookie at `$HOME/.wave/secrets/dna-cookie.txt`. SHA256-verified post-fetch; pinned in `Dockerfile` ARG `DEP_SHA256`.
-- **WAVE_AUDINATE_LICENSE_KEY** — per-endpoint license issued by Audinate's License Pool, supplied at runtime via `wrangler secret put`. The first boot activates against Audinate's cloud (one round-trip); subsequent boots no-op because activation state persists in `dante_data/activation/`.
-- **Token refresh** — see `~/.wave/drafts/audinate-dal-token-refresh.eml` (manual hand-off to `support@audinate.com`). The current DAL access token expired 2025-07-23; a refresh ticket has been drafted.
-- **Production licenses** — DEFERRED per task #141. Current state: developer access only, License Pool balance = 0. Target negotiation: per-active-stream service-provider tier.
+Audinate's Alex Grieco confirmed on 2026-06-08 that **DAL is deprecated for new designs** and WAVE Online LLC is **already licensed for the Dante SDK Connect Edition** — the modern successor that this container is built on. The Connect SDK is "an expansion of the Dante Embedded Platform (DEP) software implementation" (per dev.audinate.com Getting Started), so the DEP-OCI shape this container uses is exactly the right pairing.
 
-This container will **not start** in production until both:
-1. `WAVE_AUDINATE_LICENSE_KEY` is set (wrangler secret)
-2. The DAL access token in the upstream WAVE Audinate developer account is unexpired
+The activation tripod has **three** legs (not two):
+
+1. **DEP runtime bundle** — fetched at build-time from `dev.audinate.com` via the buildkit secret-mount cookie at `$HOME/.wave/secrets/dna-cookie.txt`. SHA256-verified post-fetch; pinned in `Dockerfile` ARG `DEP_SHA256`.
+2. **`dante.json` configuration** — `containers/dante/dante.json.template` carries our ISV identity: Audinate-assigned `manfId` (`0x31313234313139`) + WAVE-defined `modelId` (`0x5741564542524447` = "WAVEBRDG" ASCII; must be registered with Audinate Sales before a license key can be issued for it). The `network` section pins the websocket port (`49999`) so the CLI Dante Activator reaches DEP directly without device discovery.
+3. **`WAVE_AUDINATE_LICENSE_KEY` + DDM enrollment** — Connect SDK uses **time-based tokens** (daily/monthly/yearly), and a freshly-activated device **presents as zero-channel in Dante Controller until enrolled in a Dante Domain Manager (DDM) domain**. DDM is provided through a Dante Connect solution (installation coordinated with Audinate Sales). Permanent activations are available only under a DEP annual subscription — DEFERRED per task #141 until first customer demand.
+
+The container will **not pass audio in production** until all three legs are in place:
+1. `WAVE_AUDINATE_LICENSE_KEY` is set (wrangler secret) AND matches the Model ID baked into the dante.json
+2. `dante.json` is mounted/generated with the correct manfId/modelId pair
+3. The device is enrolled in a DDM domain (out-of-container concern — Connect-solution-level)
 
 In development, with `--skip-download` mode (via `scripts/fetch-dep-container.sh` in `wave-transports/dante`), the AES67 fallback (`wave-transports/dante/aes67_fallback.cc`) handles RFC 2974 SAP + RFC 4566 SDP + RFC 3550 RTP — same wire format as Dante's AES67 mode, no Audinate code required.
 

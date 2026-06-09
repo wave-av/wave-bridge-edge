@@ -99,6 +99,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     util-linux \
     tini \
     ca-certificates \
+    gettext-base \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the verified DEP bundle.
@@ -106,6 +107,13 @@ COPY --from=dep-fetcher /opt/dep /opt/dep
 
 # Copy our Go control-plane adapter.
 COPY --from=adapter-builder /out/wave-dante-bridge /usr/local/bin/wave-dante-bridge
+
+# dante.json template — WAVE's product identity (manfId/modelId) + network shape.
+# entrypoint.sh envsubsts this at boot so the interface name + websocket port can
+# be overridden per deployment without rebuilding the image.
+COPY dante.json.template /usr/local/share/wave/dante.json.template
+
+# envsubst lives in gettext-base; pull it in alongside the runtime deps below.
 
 # Activation will happen at first boot via the CLI Dante Activator binary
 # (./dante_activator) reading WAVE_AUDINATE_LICENSE_KEY from env. We do NOT
