@@ -479,7 +479,7 @@ func runX402Heartbeat(ctx context.Context, cfg *Config, logger *slog.Logger) {
 	defer ticker.Stop()
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	meterURL := cfg.GatewayBase + "/v1/meter"
+ meterURL := strings.TrimRight(cfg.GatewayBase, "/") + "/v1/meter"
 
 	for {
 		select {
