@@ -7,12 +7,20 @@ containers/*/adapter/*/bridge
 
 # Node
 node_modules/
+dist/
+
+# Wrangler
+.wrangler/
+.dev.vars
 
 # Editor
 .DS_Store
 .idea/
 .vscode/
 *.swp
+
+# Logs
+*.log
 
 # Secrets (defense-in-depth — primary path is $HOME/.wave/secrets/)
 *.env

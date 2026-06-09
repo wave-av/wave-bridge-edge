@@ -1,47 +1,53 @@
 # wave-bridge-edge
 
-**Any-to-any protocol bridge** — Layer 2 of the [WAVE Protocol Plane](https://github.com/wave-av/wave-foundation/blob/master/frameworks/protocol-plane/README.md).
+**WAVE bridge edge** — a container-based, any-to-any protocol bridge that translates between broadcast transports (SRT, NDI, Dante, OMT) and MoQ. It is Layer 2 (Bridges) of the [WAVE Protocol Plane](https://github.com/wave-av/wave-foundation/blob/master/frameworks/protocol-plane/README.md).
 
-Routes Worker traffic to CF Containers (GA 2026-04-13) running native broadcast-protocol binaries:
+A Cloudflare Worker routes gateway traffic to Cloudflare Containers running native broadcast-protocol binaries.
+
+## Status
+
+**Early / scaffold.** The Worker serves only `/health`; protocol routes return `501 BRIDGE_NOT_IMPLEMENTED`. Container scaffolds exist under [`containers/`](containers) (`srt`, `ndi`, `omt`, `ffmpeg`); the SRT spike is the first target.
 
 | Protocol | Container | License | Status |
 |---|---|---|---|
 | SRT | libsrt (BSD) | open | spike planned (Wave 1) |
-| NDI | NDI Library | Newtek redistribution check pending | spike scaffolded, blocked on license |
-| Dante | DAL | Audinate partner relationship required | research mode |
-| OMT | open ref impl | open | spike planned (Wave 2) |
+| NDI | NDI Library | Newtek redistribution check pending | scaffolded, license-blocked |
+| Dante | DAL | Audinate partner license required | research |
+| OMT | open reference impl | open | spike planned (Wave 2) |
 | ffmpeg | open | open | transcode utility (all protocols) |
 
 ## Architecture
 
 ```
-gateway.wave.online (auth/scope/meter)
+gateway.wave.online (auth / scope / meter)
         │
         ▼
-bridge.wave.online (Worker — routes to right Container)
+bridge.wave.online (Worker — routes to the right Container)
         │
-        ├──→ container:srt  (libsrt UDP handler)
-        ├──→ container:ndi  (NDI Library, mDNS bridges via Local Agent)
-        ├──→ container:dante (DAL, only with Audinate partner license)
-        └──→ container:omt  (OMT ref impl)
+        ├──→ container:srt    (libsrt UDP handler)
+        ├──→ container:ndi    (NDI Library; mDNS via Local Agent)
+        ├──→ container:dante  (DAL; only with Audinate partner license)
+        └──→ container:omt    (OMT reference impl)
 ```
 
-## Initial wave
+## Develop
 
-Wave 1 (now): **SRT spike** — `containers/srt/Dockerfile` bundles libsrt + a Go bridge that converts SRT UDP → MoQ tracks. Goal: round-trip SRT-in → MoQ-out latency < 200ms.
+Requires Node.js and a Cloudflare account.
 
-Wave 2: NDI spike (license-gated).
+```bash
+npm install
+npx wrangler dev      # local dev
+npm run deploy        # wrangler deploy
+```
 
-Wave 3: OMT spike.
+Worker config is in [`wrangler.toml`](wrangler.toml); container build definitions are under [`containers/`](containers). Secrets handling is in [SECRETS.md](SECRETS.md).
 
-Wave 4: Dante research → spike (long pole — Audinate partner relationship).
-
-## Roadmap
-
-See [roadmap issue #1](https://github.com/wave-av/wave-bridge-edge/issues/1) when filed.
-
-## Linked
+## See also
 
 - [Protocol Plane framework](https://github.com/wave-av/wave-foundation/blob/master/frameworks/protocol-plane/README.md)
-- [O5 Bridge — strategic spec](https://github.com/wave-av/wave-foundation/issues/104)
-- [WAVE Edge Plane roadmap](https://github.com/wave-av/wave-foundation/issues/95)
+- [threat-model.md](threat-model.md) · [SECURITY.md](SECURITY.md) · [CONTRIBUTING.md](CONTRIBUTING.md)
+
+## Links
+- [wave.online](https://wave.online) · [Docs](https://docs.wave.online) · [Developer portal](https://dev.wave.online)
+
+Operated by WAVE Online, LLC.
