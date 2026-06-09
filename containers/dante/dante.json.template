@@ -20,6 +20,6 @@
     "interfaceMode": "Direct",
     "interfaces": ["${WAVE_DANTE_IFACE}"],
     "preferredLinkSpeed": "LINK_SPEED_1G",
-    "webSocketPort": ${WAVE_DANTE_WS_PORT}
+    "webSocketPort": ${WAVE_DANTE_WS_PORT:-49999}
   }
 }
