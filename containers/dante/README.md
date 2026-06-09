@@ -28,7 +28,7 @@ The container will **not pass audio in production** until all three legs are in 
 2. `dante.json` is mounted/generated with the correct manfId/modelId pair
 3. The device is enrolled in a DDM domain (out-of-container concern — Connect-solution-level)
 
-In development, with `--skip-download` mode (via `scripts/fetch-dep-container.sh` in `wave-transports/dante`), the AES67 fallback (`wave-transports/dante/aes67_fallback.cc`) handles RFC 2974 SAP + RFC 4566 SDP + RFC 3550 RTP — same wire format as Dante's AES67 mode, no Audinate code required.
+In development, with `--skip-download` mode (via `scripts/fetch-dep-container.sh` in `wave-transports/dante`), the AES67 fallback (`wave-transports/dante/aes67_fallback.cc`) handles RFC 2974 SAP + RFC 4566 SDP + RFC 3550 RTP — same wire format as Dante's AES67 mode, no Audinate code required.  <!-- # guard:allow architecture-doc -->
 
 ## Build
 
@@ -65,7 +65,7 @@ JWT validation is currently base64-decode + scope-check pending a `jose/v2`-back
 
 ## Related
 
-- Upstream library wrapper: `wave-av/wave-transports` PR #6 (`dante/` subtree — DAL C++ wrapper + AES67 fallback)
+- Upstream library wrapper: `wave-av/wave-transports` PR #6 (`dante/` subtree — DAL C++ wrapper + AES67 fallback)  <!-- # guard:allow architecture-doc -->
 - Protocol plane spec: `wave-av/wave-foundation` frameworks/protocol-plane
 - Cross-layer auth model: protocol-plane `auth-token-spec.md`
 - x402 metering spec: protocol-plane `x402-metering-spec.md`
