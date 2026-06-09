@@ -11,7 +11,7 @@
 //     container binding is present — i.e. the forward branch is inert until BOTH the image lands
 //     AND CF Containers is enabled. No dormant fake success path exists.
 //
-// Trust model (see threat-model.md): bridge.wave.online sits BEHIND wave-gateway. The gateway runs
+// Trust model (see threat-model.md): bridge.wave.online sits BEHIND wave-gateway. The gateway runs  // # guard:allow architecture-doc
 // authorize → scope(srt:read|srt:write) → entitlement → meter, then forwards with x-wave-org /
 // x-wave-tier attribution headers. This worker is the origin; it makes NO access decision of its own.
 
@@ -35,7 +35,7 @@ export interface BridgeEnv {
 /** Seconds a client should wait before retrying — activation is operator-gated, not transient. */
 const SRT_RETRY_AFTER_SECONDS = 86_400; // 24h: this is a productization gate, not a blip.
 
-/** Canonical gateway scopes for this protocol (wave-gateway scopes.ts rw("srt"), PR #71 / #281).
+/** Canonical gateway scopes for this protocol (wave-gateway scopes.ts rw("srt"), PR #71 / #281).  // # guard:allow architecture-doc
  *  GET/HEAD → srt:read, mutating verbs → srt:write. NOT "srt:stream" — read/write is the vocabulary. */
 const SRT_SCOPES = { read: "srt:read", write: "srt:write" } as const;
 
