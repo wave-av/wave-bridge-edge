@@ -280,6 +280,10 @@ func handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	)
 	cmd.Dir = depWorkingDir
 	out, err := cmd.CombinedOutput()
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if err != nil {
 		slog.Error("unsubscribe exec", "err", err, "out", string(out), "req", req)
 		http.Error(w, fmt.Sprintf("dep_unsubscribe_failed: %s", out), http.StatusBadGateway)
