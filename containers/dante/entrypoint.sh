@@ -78,7 +78,9 @@ ACTIVATION_STATE="${DEP_DIR}/dante_data/activation/.activated"
 if [ ! -f "${ACTIVATION_STATE}" ]; then
   log "activating DEP endpoint against Audinate cloud (one-time per container instance)"
   if [ -x "${DEP_DIR}/tools/dante_activator" ]; then
-    timeout 30 "${DEP_DIR}/tools/dante_activator" activate \
+  timeout 30 "${DEP_DIR}/tools/dante_activator" activate \
+    --license-key "${WAVE_AUDINATE_LICENSE_KEY}" \
+    || { log "ERROR: activation failed; exiting"; exit 1; }
       --license-key "${WAVE_AUDINATE_LICENSE_KEY}" \
       || { log "ERROR: activation failed; exiting"; exit 1; }
     touch "${ACTIVATION_STATE}"
