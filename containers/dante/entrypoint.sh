@@ -41,6 +41,13 @@ else
   log "WARNING: dante.json template missing at ${DANTE_JSON_TEMPLATE}; DEP will fall back to its own defaults (channel-zero device until enrolled in DDM)"
 fi
 
+# Wait for DEP container to become runnable, fail fast if it never does
+if ! timeout 30s bash -c 'until ./runc list 2>/dev/null | grep -qw dante; do sleep 1; done'; then
+  log "ERROR: DEP container 'dante' never became runnable"
+  exit 1
+fi
+
+
 # ── DEP startup ─────────────────────────────────────────────────────────────
 cd "${DEP_DIR}"
 
