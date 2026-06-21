@@ -19,6 +19,26 @@ text = "v1.5.0"
 [vars]
 BRIDGE_FORWARD_ENABLED = "false"
 
+# MoQ container binding — LIVE (WB-6 / E4). The one strand that genuinely runs hosted: CF Containers
+# have no public UDP ingress, but the MoQ strand reaches the relay over an OUTBOUND WebSocket, which
+# works from inside a container. The image (containers/moq) runs the PROVEN strand verbatim and
+# round-trips real objects through moq.wave.online. Current-schema container block (mux-engine pattern):
+# built at deploy from the Dockerfile, bound as a Durable Object the Worker reaches via getContainer().
+# Requires CF Containers on the deploying account (Jake@gmail acct — wave.online acct is free-tier, no
+# Containers). If the binding is absent, src/moq.ts fail-closes to a typed 501 (no fabricated round-trip).
+[[containers]]
+class_name = "MoqContainer"
+image = "./containers/moq/Dockerfile"
+max_instances = 3
+
+[[durable_objects.bindings]]
+name = "MOQ_BRIDGE"
+class_name = "MoqContainer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MoqContainer"]
+
 # SRT container binding — populated when Wave-1 SRT spike provisions. OPERATOR-GATED: requires the
 # containers/srt image to be built+pushed (currently 0.0.0-scaffold, UNPUBLISHED) AND CF Containers
 # enabled on the account. The binding name MUST be SRT_BRIDGE (src/srt.ts reads env.SRT_BRIDGE).
