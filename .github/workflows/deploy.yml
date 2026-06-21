@@ -1,0 +1,55 @@
+name: deploy
+
+# Auto-deploy on push to main. Uses `deploy --name wave-bridge-edge` (NOT `--env`) to avoid the
+# wrangler env-fork bug: with a single-env wrangler.toml, `deploy --env <x>` appends <x> to the worker
+# name and forks a second worker. An explicit --name is fork-proof. (Same fix as wave-mux-engine.)
+# ubuntu-latest has Docker, which wrangler uses to build the CF Container image
+# declared in wrangler.toml [[containers]] (containers/moq/Dockerfile) — the image is NEVER built
+# locally on a Mac; CI is the container build host.
+#
+# This workflow file is OUTSIDE the `paths` filter below, so editing it does NOT trigger a deploy.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "containers/**"
+      - "wrangler.toml"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: "npm"
+      - name: install
+        run: npm ci
+
+      - name: token gate
+        id: gate
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -n "$CF_TOKEN" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::CLOUDFLARE_API_TOKEN unset — skipping CD"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: deploy worker + container
+        if: steps.gate.outputs.deploy == 'true'
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: deploy --name wave-bridge-edge
