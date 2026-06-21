@@ -1,8 +1,8 @@
 // wave-moq-bridge — the MoQ strand hosted as a CF Container (WB-6 / E4).
 //
 // HONESTY CONTRACT — this server runs the PROVEN MoQ strand, byte-for-byte. On a /bridge request it
-// spawns `node moq-strand.mjs sub` + `node moq-strand.mjs pub` (exactly as wave-transports/moq/
-// roundtrip-test.mjs does on-prem) and pushes N opaque units through the LIVE relay at moq.wave.online.
+// spawns `node moq-strand.mjs sub` + `node moq-strand.mjs pub` (exactly as the proven on-prem MoQ
+// round-trip harness does) and pushes N opaque units through the LIVE relay at moq.wave.online.
 // Every unit goes container → Cloudflare (real WebSocket/QUIC) → container and back. Nothing is
 // fabricated: if the relay is unreachable the round-trip FAILS and /bridge returns a non-ok receipt.
 //

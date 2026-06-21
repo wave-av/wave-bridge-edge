@@ -4,7 +4,7 @@
 # Pure Node — no native deps, no npm install: the proven strand (moq-strand.mjs) is zero-dependency
 # and speaks the live relay's draft-18 wire codec over the global WebSocket (stable in Node 22+).
 # server.mjs spawns that strand verbatim on each /bridge request — the container artifact is identical
-# to what was proven on-prem (wave-transports/moq/roundtrip-test.mjs → MOQ_ROUNDTRIP_PASS, 80/80).
+# to what was proven on-prem (the MoQ round-trip harness → MOQ_ROUNDTRIP_PASS, 80/80).
 #
 # This image is built at DEPLOY time (wrangler `image = ./containers/moq/Dockerfile`); the PR gate runs
 # `wrangler deploy --dry-run` and does not build it.

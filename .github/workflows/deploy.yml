@@ -2,8 +2,8 @@ name: deploy
 
 # Auto-deploy on push to main. Uses `deploy --name wave-bridge-edge` (NOT `--env`) to avoid the
 # wrangler env-fork bug: with a single-env wrangler.toml, `deploy --env <x>` appends <x> to the worker
-# name and forks a second worker. An explicit --name is fork-proof. (Same fix as wave-mux-engine /
-# wave-clip-engine.) ubuntu-latest has Docker, which wrangler uses to build the CF Container image
+# name and forks a second worker. An explicit --name is fork-proof. (Same fix as wave-mux-engine.)
+# ubuntu-latest has Docker, which wrangler uses to build the CF Container image
 # declared in wrangler.toml [[containers]] (containers/moq/Dockerfile) — the image is NEVER built
 # locally on a Mac; CI is the container build host.
 #

@@ -15,10 +15,10 @@ MoQ is the strand that genuinely runs in the cloud; `/srt` and `/ndi` stay hones
 
 ## What runs
 
-- **`moq-strand.mjs`** — vendored **verbatim** from `wave-transports/moq/moq-strand.mjs` (itself built
-  from `wave-moq-edge/src/moq-wire.ts` @ `752efd7`). Zero npm deps; a real MoQ client of the live relay
-  over the global `WebSocket`. Never hand-edit — re-vendor with
-  `cp ../../../wave-transports/moq/moq-strand.mjs moq-strand.mjs`.
+- **`moq-strand.mjs`** — vendored **verbatim** from the WAVE transports MoQ strand (built on
+  `wave-moq-edge`'s draft-18 wire codec `src/moq-wire.ts` @ `752efd7`). Zero npm deps; a real MoQ client
+  of the live relay over the global `WebSocket`. Never hand-edit — re-vendor the bundled strand artifact
+  from the upstream transports source.
 - **`server.mjs`** — HTTP control plane (port 8080). On `GET /bridge?n=N` it spawns `node
   moq-strand.mjs sub` + `node moq-strand.mjs pub` (exactly as the proven on-prem `roundtrip-test.mjs`),
   pushes N opaque units through the relay, and returns a JSON receipt
