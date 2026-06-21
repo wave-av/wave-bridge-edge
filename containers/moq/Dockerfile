@@ -18,4 +18,7 @@ COPY moq-strand.mjs server.mjs ./
 # only network egress is the outbound WSS to the relay, which is what makes MoQ hostable here.
 EXPOSE 8080/tcp
 ENV PORT=8080
+# Drop privileges: run as the built-in non-root `node` user (uid 1000). 8080 is non-privileged, the
+# strand writes nothing to disk, and child `node` processes inherit this user — so root is never needed.
+USER node
 ENTRYPOINT ["node", "server.mjs"]
