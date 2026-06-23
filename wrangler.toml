@@ -59,3 +59,24 @@ new_sqlite_classes = ["MoqContainer"]
 # binding = "NDI_BRIDGE"
 # image = "docker.io/wave-av/wave-ndi-bridge:0.0.0-scaffold"
 # instance_type = "standard"  # NDI 6 HDR + WAN discovery ≈ standard tier
+
+# OMT (Open Media Transport) container binding — egress matrix (#73). OPERATOR-GATED on TWO fronts (one
+# FEWER than NDI: OMT is open-spec, NO Vizrt-style redistribution license): the containers/omt image is
+# unpushed (scaffold) AND CF Containers is off. The binding name MUST be OMT_BRIDGE (src/omt.ts reads
+# env.OMT_BRIDGE). .NET 8 + libomtnet + libvmx + a Go control plane (gateway scope/meter/settle).
+# [[containers]]
+# name = "omt-bridge"
+# binding = "OMT_BRIDGE"
+# image = "docker.io/wave-av/wave-omt-bridge:0.0.0-scaffold"
+# instance_type = "standard"  # .NET 8 + libomtnet ≈ standard tier
+
+# FFmpeg file-playout container binding — the RECORDED-first egress ENGINE (#73, contract ADR). PULLs a
+# finalized R2 recording (outbound signed GET on objectUrl) → ffmpeg 8.1.1 demux/transcode → feeds the
+# SRT/NDI/OMT sender. OPERATOR-GATED: the containers/ffmpeg image is unpushed (scaffold) AND CF Containers
+# is off. The binding name MUST be FFMPEG_BRIDGE (src/ffmpeg.ts reads env.FFMPEG_BRIDGE). No R2 creds live
+# in this container (single-writer A-DO invariant: the DO/driver owns R2; this stage is pure transcode).
+# [[containers]]
+# name = "ffmpeg-playout"
+# binding = "FFMPEG_BRIDGE"
+# image = "docker.io/wave-av/wave-ffmpeg-bridge:0.0.0-scaffold"
+# instance_type = "standard"  # ffmpeg AV2/AV1/H.264 transcode ≈ standard tier (max for AV2 heavy paths)

@@ -19,9 +19,14 @@ import { env } from "cloudflare:test";
 // which the workerd runtime lacks). This is the inert-leak guard's source of truth: the actual config.
 import wranglerToml from "../wrangler.toml?raw";
 import { describe, expect, it, vi } from "vitest";
-import { selectEgress, type RealtimeEgressSource } from "../src/egress";
+import { selectEgress, selectRecordedPlayout, type RealtimeEgressSource } from "../src/egress";
 import { handleSrt, type BridgeEnv, type ContainerBinding } from "../src/srt";
 import { handleNdi } from "../src/ndi";
+import { handleOmt } from "../src/omt";
+import { handlePlayout } from "../src/ffmpeg";
+import worker from "../src/worker";
+
+type WorkerEnv = Parameters<typeof worker.fetch>[1];
 
 const baseEnv = env as unknown as BridgeEnv;
 
@@ -47,9 +52,49 @@ describe("selectEgress — routes a realtime source to the EXISTING protocol han
 		expect(handler).toBe(handleNdi);
 	});
 
-	it("(d) target 'omt' has no route yet → undefined (design-only, no fabricated transport)", () => {
-		const handler = selectEgress("omt", baseEnv);
+	it("(a) target 'omt' resolves to the existing handleOmt (open-spec, no license gate)", () => {
+		const handler = selectEgress(source({ target: "omt" }).target, baseEnv);
+		expect(handler).toBe(handleOmt);
+	});
+});
+
+describe("selectRecordedPlayout — RECORDED-first source stage (contract ADR)", () => {
+	it("recorded + objectUrl routes to the ffmpeg file-playout handler (handlePlayout)", () => {
+		const handler = selectRecordedPlayout(source({ mode: "recorded" }), baseEnv);
+		expect(handler).toBe(handlePlayout);
+	});
+
+	it("live mode has no playout route here (deferred — needs the realtime→MoQ republish shim)", () => {
+		const handler = selectRecordedPlayout(source({ mode: "live", objectUrl: undefined, moqTrack: "org/sess/cam" }), baseEnv);
 		expect(handler).toBeUndefined();
+	});
+
+	it("recorded WITHOUT a signed objectUrl → no playout route (never pretends a path exists)", () => {
+		const handler = selectRecordedPlayout(source({ mode: "recorded", objectUrl: undefined }), baseEnv);
+		expect(handler).toBeUndefined();
+	});
+
+	it("the playout stage fail-closes to its own honest 501 when FFMPEG_BRIDGE is unbound, no throw", async () => {
+		const handler = selectRecordedPlayout(source(), baseEnv);
+		expect(handler).toBeDefined();
+		const res = await handler!(new Request("https://bridge.wave.online/playout"), baseEnv);
+		expect(res.status).toBe(501);
+		const body = (await res.json()) as Record<string, unknown>;
+		expect(body.error).toBe("FFMPEG_PLAYOUT_NOT_ACTIVATED");
+		expect(body.live).toBe(false);
+		expect(body.metered).toBe(false);
+		expect(body.required_scope).toBe("playout:read");
+	});
+
+	it("playout flag ON but FFMPEG_BRIDGE absent (the only real state) still 501 — gate not weakened", async () => {
+		const handler = selectRecordedPlayout(source(), baseEnv);
+		const res = await handler!(new Request("https://bridge.wave.online/playout"), {
+			...baseEnv,
+			BRIDGE_FORWARD_ENABLED: "true",
+			FFMPEG_BRIDGE: undefined,
+		});
+		expect(res.status).toBe(501);
+		expect(((await res.json()) as Record<string, unknown>).error).toBe("FFMPEG_PLAYOUT_NOT_ACTIVATED");
 	});
 });
 
@@ -84,6 +129,27 @@ describe("selectEgress — fail-closed: unconfigured env yields the honest 501, 
 		expect(((await res.json()) as Record<string, unknown>).error).toBe("NDI_BRIDGE_NOT_ACTIVATED");
 	});
 
+	it("omt target with no OMT_BRIDGE → honest OMT 501, no throw (open-spec, still fail-closed)", async () => {
+		const handler = selectEgress("omt", baseEnv);
+		const res = await handler!(new Request("https://bridge.wave.online/omt"), baseEnv);
+		expect(res.status).toBe(501);
+		const body = (await res.json()) as Record<string, unknown>;
+		expect(body.error).toBe("OMT_BRIDGE_NOT_ACTIVATED");
+		expect(body.live).toBe(false);
+		expect(body.metered).toBe(false);
+	});
+
+	it("omt flag ON but OMT_BRIDGE absent (the only real state) still 501 — seam never weakens omtActivated", async () => {
+		const handler = selectEgress("omt", baseEnv);
+		const res = await handler!(new Request("https://bridge.wave.online/omt"), {
+			...baseEnv,
+			BRIDGE_FORWARD_ENABLED: "true",
+			OMT_BRIDGE: undefined,
+		});
+		expect(res.status).toBe(501);
+		expect(((await res.json()) as Record<string, unknown>).error).toBe("OMT_BRIDGE_NOT_ACTIVATED");
+	});
+
 	it("the seam does NOT bypass the gate: flag ON + a real binding still forwards via the SAME handler", async () => {
 		// Proves the seam routes to the unmodified handler whose activation logic is intact — when a
 		// real binding IS present (a stub here), the existing handler forwards. The seam adds nothing.
@@ -114,6 +180,35 @@ describe("egress scope is still the canonical srt:read|srt:write (never srt:stre
 		expect(JSON.parse(text).required_scope).toBe("srt:write");
 		expect(text).not.toContain("srt:stream");
 	});
+
+	it("(c) OMT egress route → omt:read on GET / omt:write on POST, never omt:stream", async () => {
+		const handler = selectEgress("omt", baseEnv);
+		const getRes = await handler!(new Request("https://bridge.wave.online/omt"), baseEnv);
+		expect(((await getRes.json()) as Record<string, unknown>).required_scope).toBe("omt:read");
+		const postRes = await handler!(new Request("https://bridge.wave.online/omt/play", { method: "POST" }), baseEnv);
+		const text = await postRes.text();
+		expect(JSON.parse(text).required_scope).toBe("omt:write");
+		expect(text).not.toContain("omt:stream");
+	});
+});
+
+describe("worker /omt and /playout routes are honest-501 end-to-end (the matrix is wired)", () => {
+	it("GET /omt → 501 OMT_BRIDGE_NOT_ACTIVATED via the worker", async () => {
+		const res = await worker.fetch(new Request("https://bridge.wave.online/omt"), baseEnv as WorkerEnv);
+		expect(res.status).toBe(501);
+		expect(((await res.json()) as Record<string, unknown>).error).toBe("OMT_BRIDGE_NOT_ACTIVATED");
+	});
+
+	it("GET /playout → 501 FFMPEG_PLAYOUT_NOT_ACTIVATED via the worker", async () => {
+		const res = await worker.fetch(new Request("https://bridge.wave.online/playout"), baseEnv as WorkerEnv);
+		expect(res.status).toBe(501);
+		expect(((await res.json()) as Record<string, unknown>).error).toBe("FFMPEG_PLAYOUT_NOT_ACTIVATED");
+	});
+
+	it("/srt and /bridge routing is unchanged (matrix extension did not disturb existing routes)", async () => {
+		const srt = await worker.fetch(new Request("https://bridge.wave.online/srt"), baseEnv as WorkerEnv);
+		expect(((await srt.json()) as Record<string, unknown>).error).toBe("SRT_BRIDGE_NOT_ACTIVATED");
+	});
 });
 
 describe("(e) wrangler-inert guard — the seam arms NOTHING", () => {
@@ -133,6 +228,26 @@ describe("(e) wrangler-inert guard — the seam arms NOTHING", () => {
 	it("the NDI_BRIDGE binding stays COMMENTED (inert)", () => {
 		expect(wrangler).not.toMatch(/^\s*binding\s*=\s*"NDI_BRIDGE"/m);
 		expect(wrangler).toMatch(/#\s*binding\s*=\s*"NDI_BRIDGE"/);
+	});
+
+	it("the OMT_BRIDGE binding stays COMMENTED (inert)", () => {
+		expect(wrangler).not.toMatch(/^\s*binding\s*=\s*"OMT_BRIDGE"/m);
+		expect(wrangler).toMatch(/#\s*binding\s*=\s*"OMT_BRIDGE"/);
+	});
+
+	it("the FFMPEG_BRIDGE binding stays COMMENTED (inert)", () => {
+		expect(wrangler).not.toMatch(/^\s*binding\s*=\s*"FFMPEG_BRIDGE"/m);
+		expect(wrangler).toMatch(/#\s*binding\s*=\s*"FFMPEG_BRIDGE"/);
+	});
+
+	it("the ONLY uncommented [[containers]] is the live MoQ block (no protocol egress binding leaked)", () => {
+		// Every uncommented `binding = "..."` line must be a MoQ/durable-object binding, never SRT/NDI/OMT/FFMPEG.
+		const activeBindings = wrangler
+			.split("\n")
+			.filter((l) => /^\s*binding\s*=/.test(l) && !/^\s*#/.test(l));
+		for (const line of activeBindings) {
+			expect(line).not.toMatch(/"(SRT|NDI|OMT|FFMPEG)_BRIDGE"/);
+		}
 	});
 
 	it("BRIDGE_FORWARD_ENABLED stays \"false\" (the operator-gate is closed)", () => {
