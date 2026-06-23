@@ -2,6 +2,37 @@ name = "wave-bridge-edge"
 main = "src/worker.ts"
 compatibility_date = "2026-04-15"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+# ROUTES — the bridge.wave.online APEX is served by the Core-Origin Next.js app (a separate worker).
+# This worker owns ONLY the protocol paths. Without these routes the worker is invoked solely via the
+# gateway service-binding, so a direct `curl https://bridge.wave.online/srt` falls through to the
+# Core-Origin app and returns its Next.js 404 — NOT this worker's honest typed 501. That makes the
+# egress honest-501 independently unreachable for a receipt. These PATH-SCOPED routes attach the worker
+# to exactly the protocol paths (and /health for liveness) while leaving the apex `/` to Core-Origin,
+# so a receipt becomes obtainable WITHOUT changing the Core-Origin app's routing.
+#
+# ROUTES PLACEMENT LAW (config-no-silent-noop, mirrors wave-realtime-edge/wave-media-edge): `routes`
+# MUST be a top-level key BEFORE any [table] header (e.g. before [vars]). A `routes` key placed after a
+# [table] is parsed as that table's field and SILENTLY ignored ("Unexpected fields…routes") — the
+# routes never attach. zone_name="wave.online" + path patterns = Worker Routes (not custom_domain;
+# custom_domain would claim the whole hostname and collide with Core-Origin's apex).
+#
+# DORMANCY NOTE: attaching these routes makes the worker independently reachable, but every protocol
+# path still returns its honest typed 501 (SRT_BRIDGE_NOT_ACTIVATED, …) until its [[containers]] binding
+# is provisioned AND BRIDGE_FORWARD_ENABLED="true". /bridge (MoQ) is the one LIVE path. No transport is
+# fabricated by adding a route — the route only makes the EXISTING honest-501 receivable for a receipt.
+#
+# ⚠️ FIRST-DEPLOY AUDIT: before merge takes effect, audit for a stale Worker Route on these patterns
+# that could shadow this worker, and confirm Core-Origin does not also claim `bridge.wave.online/srt*`.
+routes = [
+  { pattern = "bridge.wave.online/health", zone_name = "wave.online" },
+  { pattern = "bridge.wave.online/bridge*", zone_name = "wave.online" },
+  { pattern = "bridge.wave.online/srt*", zone_name = "wave.online" },
+  { pattern = "bridge.wave.online/ndi*", zone_name = "wave.online" },
+  { pattern = "bridge.wave.online/omt*", zone_name = "wave.online" },
+  { pattern = "bridge.wave.online/playout*", zone_name = "wave.online" },
+]
 
 # wave-foundation pin — keep in sync with .foundation-version.
 [[unsafe.bindings]]
@@ -39,14 +70,24 @@ class_name = "MoqContainer"
 tag = "v1"
 new_sqlite_classes = ["MoqContainer"]
 
-# SRT container binding — populated when Wave-1 SRT spike provisions. OPERATOR-GATED: requires the
-# containers/srt image to be built+pushed (currently 0.0.0-scaffold, UNPUBLISHED) AND CF Containers
-# enabled on the account. The binding name MUST be SRT_BRIDGE (src/srt.ts reads env.SRT_BRIDGE).
+# SRT container binding — egress matrix (#73). OPERATOR-GATED on TWO fronts: the containers/srt image is
+# unpushed (egress adapter is a scaffold) AND CF Containers is off. The binding name MUST be SRT_BRIDGE
+# (src/srt.ts reads env.SRT_BRIDGE). Build mirrors the live MoQ block's current schema (class_name +
+# durable_objects + migration), built at deploy from the egress Dockerfile. Worker reaches it via
+# getContainer(). The egress adapter (containers/srt/egress) does MoQ/file → SRT CALLER push-out; libsrt
+# is BSD (no license gate, unlike NDI). UNCOMMENT only after the image is built+pushed AND Containers on.
 # [[containers]]
-# name = "srt-bridge"
-# binding = "SRT_BRIDGE"
-# image = "docker.io/wave-av/wave-srt-bridge:0.0.0-scaffold"
-# instance_type = "standard"  # or "lite" / "max" per active-CPU economics
+# class_name = "SrtContainer"
+# image = "./containers/srt/Dockerfile"
+# max_instances = 3
+#
+# [[durable_objects.bindings]]
+# name = "SRT_BRIDGE"
+# class_name = "SrtContainer"
+#
+# [[migrations]]
+# tag = "v2"
+# new_sqlite_classes = ["SrtContainer"]
 
 # NDI container binding — Wave-2 NDI bridge (NDI 6 Discovery Server + Go adapter that bridges to MoQ).
 # OPERATOR-GATED ON THREE FRONTS (one more than SRT): the containers/ndi image is unpushed AND CF
