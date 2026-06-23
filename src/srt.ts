@@ -30,6 +30,13 @@ export interface BridgeEnv {
 	SRT_BRIDGE?: ContainerBinding;
 	/** CF Container binding for the NDI↔MoQ bridge. Absent today (license-gated #169 + image unpushed). */
 	NDI_BRIDGE?: ContainerBinding;
+	/** CF Container binding for the OMT (Open Media Transport) bridge. Absent today (image unpushed +
+	 *  Containers off). OMT is open-spec — NO license gate (unlike NDI), so it has one fewer blocker. */
+	OMT_BRIDGE?: ContainerBinding;
+	/** CF Container binding for the ffmpeg file-playout stage — the RECORDED-first egress engine that
+	 *  PULLs a finalized R2 recording (outbound GET on `objectUrl`) → demux → re-encode → feeds a
+	 *  transport (SRT/NDI/OMT). Absent today (image unpushed + Containers off). */
+	FFMPEG_BRIDGE?: ContainerBinding;
 }
 
 /** Seconds a client should wait before retrying — activation is operator-gated, not transient. */
