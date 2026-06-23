@@ -7,6 +7,20 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- **Path-scoped `routes` in `wrangler.toml`** so the worker attaches to `bridge.wave.online/{srt,ndi,omt,
+  playout,bridge,health}*` directly. Previously the worker had NO route and was invoked only via the
+  gateway service-binding, so `curl bridge.wave.online/srt` fell through to the Core-Origin Next.js app's
+  404 — the egress honest-501 was not independently reachable for a receipt. The routes are PATH-SCOPED
+  (Worker Routes with `zone_name`, not `custom_domain`) so the Core-Origin apex `/` is untouched. Adding
+  a route fabricates no transport — every protocol path still returns its honest typed 501 until armed (#73).
+- **SRT egress container scaffold** (`containers/srt/egress/{server.mjs,Dockerfile}`) — the MoQ/file → SRT
+  CALLER push-out direction (reverse of the existing SRT ingress adapter), mirroring the `containers/moq`
+  hosted-container pattern. Honest-501 control plane (`SRT_EGRESS_NOT_IMPLEMENTED`); the real ffmpeg+libsrt
+  sender is added at arm time. The `SRT_BRIDGE` `[[containers]]` binding (now the live-MoQ `class_name`
+  schema: `SrtContainer` + durable-object binding + migration) stays **COMMENTED/inert** (#73).
+- **`docs/runbook-srt-egress-arm.md`** — the exact ◆-marked steps to arm RECORDED → SRT egress later
+  (build+push the egress image, enable CF Containers, uncomment the binding, flip `BRIDGE_FORWARD_ENABLED`,
+  drive a stored R2 recording → outbound pull → ffmpeg → srt, prove with `ffplay srt://…` first-frame) (#73).
 - `/srt` route with a typed, honest `501 SRT_BRIDGE_NOT_ACTIVATED` response (`status: not_activated`,
   `metered: false`, `live: false`, accurate `Retry-After`, canonical `srt:read`/`srt:write` scope, and
   an explicit operator-blocker list). Gateway-forward SHAPE is wired behind a default-off
