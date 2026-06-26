@@ -106,6 +106,129 @@ export function selectRecordedPlayout(
 	return undefined;
 }
 
+/** Seconds a client should wait before retrying a deferred egress path — operator-gated, not transient. */
+const EGRESS_RETRY_AFTER_SECONDS = 86_400; // 24h: productization gate, mirrors the per-protocol handlers.
+
+/** Validate an untrusted request body into a typed `RealtimeEgressSource`, or an actionable reason.
+ *  Pure + total (never throws): the worker route turns `ok:false` into a typed 400, never a stream. */
+function validateSource(
+	body: unknown,
+): { ok: true; source: RealtimeEgressSource } | { ok: false; reason: string } {
+	if (typeof body !== "object" || body === null) return { ok: false, reason: "body must be a JSON object" };
+	const b = body as Record<string, unknown>;
+	if (b.mode !== "recorded" && b.mode !== "live") return { ok: false, reason: "mode must be 'recorded' or 'live'" };
+	if (typeof b.org !== "string" || b.org.length === 0) return { ok: false, reason: "org is required" };
+	if (typeof b.sessionId !== "string" || b.sessionId.length === 0) return { ok: false, reason: "sessionId is required" };
+	if (b.target !== "srt" && b.target !== "ndi" && b.target !== "omt")
+		return { ok: false, reason: "target must be one of srt|ndi|omt" };
+	if (b.mode === "recorded" && (typeof b.objectUrl !== "string" || b.objectUrl.length === 0))
+		return { ok: false, reason: "recorded mode requires a signed objectUrl" };
+	if (b.mode === "live" && (typeof b.moqTrack !== "string" || b.moqTrack.length === 0))
+		return { ok: false, reason: "live mode requires a moqTrack name" };
+	return {
+		ok: true,
+		source: {
+			mode: b.mode,
+			org: b.org,
+			sessionId: b.sessionId,
+			objectUrl: typeof b.objectUrl === "string" ? b.objectUrl : undefined,
+			moqTrack: typeof b.moqTrack === "string" ? b.moqTrack : undefined,
+			target: b.target,
+		},
+	};
+}
+
+/**
+ * Handle `POST /egress` — the realtime→baseband egress ENTRY ROUTE (task #73 P1.5).
+ *
+ * This is the missing HTTP seam: it accepts a `RealtimeEgressSource` descriptor and drives the EXISTING
+ * `selectRecordedPlayout` / `selectEgress` routing end-to-end, so a finalized realtime recording can ask
+ * the bridge to egress it to a baseband transport. It adds NO transport of its own and fabricates NOTHING:
+ *   - non-POST            → typed 405 (the descriptor is a body; only POST carries it).
+ *   - malformed/invalid   → typed 400 `EGRESS_BAD_REQUEST` with an actionable `reason`.
+ *   - unroutable target   → typed 501 `EGRESS_TARGET_NOT_ROUTABLE` (forward-compat; today srt|ndi|omt route).
+ *   - `mode:'live'`       → typed 501 `EGRESS_LIVE_MODE_NOT_AVAILABLE` (needs the realtime→MoQ republish
+ *                           shim in wave-realtime-edge — net-new, deferred; never a faked live path).
+ *   - `mode:'recorded'`   → routes through the ffmpeg file-playout front-end (`handlePlayout`), which itself
+ *                           fail-closes to its honest `FFMPEG_PLAYOUT_NOT_ACTIVATED` 501 until `FFMPEG_BRIDGE`
+ *                           is bound + the flag is on. When activated, that forward feeds the transport sender.
+ *
+ * The body is validated on a CLONE so the original request stream stays intact for the downstream forward
+ * (when activated, `handlePlayout` hands the verbatim request to the transcode container).
+ */
+export async function handleEgress(request: Request, env: BridgeEnv): Promise<Response> {
+	if (request.method !== "POST") {
+		return Response.json(
+			{
+				error: "EGRESS_METHOD_NOT_ALLOWED",
+				protocol: "egress",
+				allow: "POST",
+				hint: "POST a RealtimeEgressSource descriptor { mode, org, sessionId, target, objectUrl? } to request egress.",
+			},
+			{ status: 405, headers: { allow: "POST", "cache-control": "no-store" } },
+		);
+	}
+
+	let parsed: unknown;
+	try {
+		parsed = await request.clone().json();
+	} catch {
+		return egressBadRequest("malformed JSON body");
+	}
+	const v = validateSource(parsed);
+	if (!v.ok) return egressBadRequest(v.reason);
+	const src = v.source;
+
+	// Forward-compat guard: a target with no real bridge route → honest 501 (today the union is exhaustive).
+	if (!selectEgress(src.target, env)) {
+		return Response.json(
+			{
+				error: "EGRESS_TARGET_NOT_ROUTABLE",
+				protocol: "egress",
+				target: src.target,
+				live: false,
+				metered: false,
+				hint: "No bridge route exists for this target yet — never a fabricated stream.",
+			},
+			{ status: 501, headers: { "cache-control": "no-store" } },
+		);
+	}
+
+	if (src.mode === "live") {
+		// DEFERRED: live egress needs the realtime→MoQ republish shim (net-new). Never pretend it exists.
+		return Response.json(
+			{
+				error: "EGRESS_LIVE_MODE_NOT_AVAILABLE",
+				protocol: "egress",
+				mode: "live",
+				live: false,
+				metered: false,
+				blockers: ["realtime→MoQ republish shim in wave-realtime-edge (net-new, deferred)"],
+				hint: "Use mode:'recorded' with a finalized R2 objectUrl today.",
+			},
+			{ status: 501, headers: { "retry-after": String(EGRESS_RETRY_AFTER_SECONDS), "cache-control": "no-store" } },
+		);
+	}
+
+	// RECORDED mode (the live path today): route FIRST through the ffmpeg file-playout front-end per the
+	// ACCEPTED ADR — it PULLs objectUrl → transcode → hands the elementary stream to the selectEgress(target)
+	// sender. It fail-closes to its own honest FFMPEG_PLAYOUT_NOT_ACTIVATED 501 until FFMPEG_BRIDGE is bound.
+	const playout = selectRecordedPlayout(src, env);
+	if (!playout) {
+		// validateSource already requires objectUrl for recorded; defensive — never pretend a path exists.
+		return egressBadRequest("recorded mode requires a signed objectUrl");
+	}
+	return playout(request, env);
+}
+
+/** Typed 400 for an invalid egress descriptor — actionable reason, never a thrown error or a fake stream. */
+function egressBadRequest(reason: string): Response {
+	return Response.json(
+		{ error: "EGRESS_BAD_REQUEST", protocol: "egress", reason },
+		{ status: 400, headers: { "cache-control": "no-store" } },
+	);
+}
+
 // DESIGN (P2/P3) — the adapter EMIT path, per protocol. The containers/{srt,ndi,omt} Go/.NET adapters
 // today bridge INGRESS (baseband → MoQ tracks). EGRESS is the REVERSE — MoQ/file → a native SENDER — and
 // is the FAVORABLE direction: a sender pushes OUT (outbound), and CF Containers reach the net only
@@ -124,4 +247,4 @@ export function selectRecordedPlayout(
 //     `selectRecordedPlayout` routes to; the wire transport stays the per-protocol `*_BRIDGE` above.
 // All of the above stay dormant behind the operator-gate (`*_BRIDGE` binding + BRIDGE_FORWARD_ENABLED).
 
-export const __testing = { EGRESS_HANDLERS };
+export const __testing = { EGRESS_HANDLERS, validateSource, EGRESS_RETRY_AFTER_SECONDS };

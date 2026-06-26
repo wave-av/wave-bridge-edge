@@ -19,7 +19,7 @@ import { env } from "cloudflare:test";
 // which the workerd runtime lacks). This is the inert-leak guard's source of truth: the actual config.
 import wranglerToml from "../wrangler.toml?raw";
 import { describe, expect, it, vi } from "vitest";
-import { selectEgress, selectRecordedPlayout, type RealtimeEgressSource } from "../src/egress";
+import { selectEgress, selectRecordedPlayout, handleEgress, type RealtimeEgressSource } from "../src/egress";
 import { handleSrt, type BridgeEnv, type ContainerBinding } from "../src/srt";
 import { handleNdi } from "../src/ndi";
 import { handleOmt } from "../src/omt";
@@ -211,6 +211,100 @@ describe("worker /omt and /playout routes are honest-501 end-to-end (the matrix 
 	});
 });
 
+describe("handleEgress — the realtime→baseband egress ENTRY route (#73 P1.5)", () => {
+	function post(body: unknown): Request {
+		return new Request("https://bridge.wave.online/egress", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		});
+	}
+
+	it("a recorded descriptor → routes through the ffmpeg playout front-end → honest 501, no throw", async () => {
+		const res = await handleEgress(post(source({ target: "srt" })), baseEnv);
+		expect(res.status).toBe(501);
+		const body = (await res.json()) as Record<string, unknown>;
+		// recorded mode routes FIRST through handlePlayout (the ACCEPTED ADR), which fail-closes here.
+		expect(body.error).toBe("FFMPEG_PLAYOUT_NOT_ACTIVATED");
+		expect(body.live).toBe(false);
+		expect(body.metered).toBe(false);
+	});
+
+	it("recorded descriptor for EVERY routable target still lands on the honest playout 501 (no fake stream)", async () => {
+		for (const target of ["srt", "ndi", "omt"] as const) {
+			const res = await handleEgress(post(source({ target })), baseEnv);
+			expect(res.status).toBe(501);
+			expect(((await res.json()) as Record<string, unknown>).error).toBe("FFMPEG_PLAYOUT_NOT_ACTIVATED");
+		}
+	});
+
+	it("live mode → typed 501 EGRESS_LIVE_MODE_NOT_AVAILABLE (deferred shim, never faked)", async () => {
+		const res = await handleEgress(post(source({ mode: "live", objectUrl: undefined, moqTrack: "org/sess/cam" })), baseEnv);
+		expect(res.status).toBe(501);
+		const body = (await res.json()) as Record<string, unknown>;
+		expect(body.error).toBe("EGRESS_LIVE_MODE_NOT_AVAILABLE");
+		expect(body.live).toBe(false);
+		expect(body.metered).toBe(false);
+		expect(res.headers.get("retry-after")).toBe("86400");
+	});
+
+	it("non-POST → typed 405 with Allow: POST (the descriptor is a body)", async () => {
+		const res = await handleEgress(new Request("https://bridge.wave.online/egress"), baseEnv);
+		expect(res.status).toBe(405);
+		expect(res.headers.get("allow")).toBe("POST");
+		expect(((await res.json()) as Record<string, unknown>).error).toBe("EGRESS_METHOD_NOT_ALLOWED");
+	});
+
+	it("malformed JSON → typed 400 EGRESS_BAD_REQUEST, no throw", async () => {
+		const req = new Request("https://bridge.wave.online/egress", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: "{ not json",
+		});
+		const res = await handleEgress(req, baseEnv);
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as Record<string, unknown>).error).toBe("EGRESS_BAD_REQUEST");
+	});
+
+	it.each([
+		["missing mode", { org: "o", sessionId: "s", target: "srt", objectUrl: "https://r2/x" }, "mode must be 'recorded' or 'live'"],
+		["bad target", { mode: "recorded", org: "o", sessionId: "s", target: "rtmp", objectUrl: "https://r2/x" }, "target must be one of srt|ndi|omt"],
+		["recorded missing objectUrl", { mode: "recorded", org: "o", sessionId: "s", target: "srt" }, "recorded mode requires a signed objectUrl"],
+		["missing org", { mode: "recorded", sessionId: "s", target: "srt", objectUrl: "https://r2/x" }, "org is required"],
+		["live missing moqTrack", { mode: "live", org: "o", sessionId: "s", target: "srt" }, "live mode requires a moqTrack name"],
+	])("invalid descriptor (%s) → 400 with actionable reason", async (_label, body, reason) => {
+		const res = await handleEgress(post(body), baseEnv);
+		expect(res.status).toBe(400);
+		const parsed = (await res.json()) as Record<string, unknown>;
+		expect(parsed.error).toBe("EGRESS_BAD_REQUEST");
+		expect(parsed.reason).toBe(reason);
+	});
+
+	it("flag ON + FFMPEG_BRIDGE bound: recorded egress forwards to the playout container (seam doesn't bypass)", async () => {
+		const stub: ContainerBinding = { fetch: vi.fn(async () => new Response("playout-fwd", { status: 200 })) };
+		const res = await handleEgress(post(source({ target: "srt" })), {
+			...baseEnv,
+			BRIDGE_FORWARD_ENABLED: "true",
+			FFMPEG_BRIDGE: stub,
+		});
+		expect(res.status).toBe(200);
+		expect(stub.fetch).toHaveBeenCalledOnce();
+		expect(await res.text()).toBe("playout-fwd");
+	});
+
+	it("end-to-end via worker.fetch: POST /egress recorded → honest playout 501 (route is wired)", async () => {
+		const res = await worker.fetch(post(source({ target: "srt" })), baseEnv as WorkerEnv);
+		expect(res.status).toBe(501);
+		expect(((await res.json()) as Record<string, unknown>).error).toBe("FFMPEG_PLAYOUT_NOT_ACTIVATED");
+	});
+
+	it("end-to-end via worker.fetch: GET /egress → 405 (the entry route only accepts POST)", async () => {
+		const res = await worker.fetch(new Request("https://bridge.wave.online/egress"), baseEnv as WorkerEnv);
+		expect(res.status).toBe(405);
+		expect(((await res.json()) as Record<string, unknown>).error).toBe("EGRESS_METHOD_NOT_ALLOWED");
+	});
+});
+
 describe("(e) wrangler-inert guard — the seam arms NOTHING", () => {
 	const wrangler = wranglerToml;
 
@@ -268,6 +362,10 @@ describe("routing — protocol paths attach to the worker WITHOUT claiming the C
 		// so the honest 501 is unreachable for a receipt. A path-scoped Worker Route fixes that.
 		expect(wrangler).toMatch(/pattern\s*=\s*"bridge\.wave\.online\/srt\*"/);
 		expect(wrangler).toMatch(/pattern\s*=\s*"bridge\.wave\.online\/srt\*",\s*zone_name\s*=\s*"wave\.online"/);
+	});
+
+	it("the /egress entry route is path-scoped so the realtime→egress honest-501 is independently reachable", () => {
+		expect(wrangler).toMatch(/pattern\s*=\s*"bridge\.wave\.online\/egress\*",\s*zone_name\s*=\s*"wave\.online"/);
 	});
 
 	it("does NOT claim the bridge.wave.online apex (no custom_domain, no bare-host or /* pattern)", () => {

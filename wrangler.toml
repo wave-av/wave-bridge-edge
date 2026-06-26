@@ -32,6 +32,7 @@ routes = [
   { pattern = "bridge.wave.online/ndi*", zone_name = "wave.online" },
   { pattern = "bridge.wave.online/omt*", zone_name = "wave.online" },
   { pattern = "bridge.wave.online/playout*", zone_name = "wave.online" },
+  { pattern = "bridge.wave.online/egress*", zone_name = "wave.online" },
 ]
 
 # wave-foundation pin — keep in sync with .foundation-version.

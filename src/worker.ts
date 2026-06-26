@@ -7,6 +7,7 @@ import { handleSrt, type BridgeEnv } from "./srt";
 import { handleNdi } from "./ndi";
 import { handleOmt } from "./omt";
 import { handlePlayout } from "./ffmpeg";
+import { handleEgress } from "./egress";
 import { handleMoqBridge, MoqContainer, type MoqEnv } from "./moq";
 
 // CF Container Durable Object class must be re-exported from the Worker entry so wrangler can bind it.
@@ -52,6 +53,11 @@ export default {
 			if (url.pathname === "/playout" || url.pathname.startsWith("/playout/")) {
 				return handlePlayout(request, env);
 		}
+		// Realtime → baseband EGRESS entry (#73). POST a RealtimeEgressSource descriptor; the route drives
+		// the recorded-playout → transport seam, fail-closing to the existing honest 501s (no fake stream).
+		if (url.pathname === "/egress" || url.pathname.startsWith("/egress/")) {
+			return handleEgress(request, env);
+		}
 		// All other protocols are not implemented yet — generic honest 501.
 		return Response.json(
 			{ error: "BRIDGE_NOT_IMPLEMENTED", protocol: url.pathname.split("/")[1] ?? "unknown" },
@@ -72,6 +78,9 @@ const LLMS_TXT = `# WAVE — Bridge Edge
 > Advanced SDK redistribution (#169). /omt (scope omt:read|omt:write) is open-spec (no license gate) and
 > /playout (scope playout:read|playout:write) is the RECORDED-first ffmpeg file->transport stage — both
 > typed 501 until their containers/{omt,ffmpeg} images + bindings land. Dante still on the generic 501.
+> /egress is the realtime->baseband ENTRY: POST a RealtimeEgressSource { mode, org, sessionId, target,
+> objectUrl? } and it drives the recorded-playout->transport seam, fail-closing to the same honest 501s
+> (recorded->FFMPEG_PLAYOUT_NOT_ACTIVATED today; live mode deferred to the realtime->MoQ republish shim).
 > Part of WAVE — the open
 > video API for people and AI agents.
 
