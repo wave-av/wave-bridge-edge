@@ -9,9 +9,12 @@ import { handleOmt } from "./omt";
 import { handlePlayout } from "./ffmpeg";
 import { handleEgress } from "./egress";
 import { handleMoqBridge, MoqContainer, type MoqEnv } from "./moq";
+import { SrtContainer, FfmpegContainer, NdiContainer, OmtContainer } from "./containers";
 
-// CF Container Durable Object class must be re-exported from the Worker entry so wrangler can bind it.
-export { MoqContainer };
+// CF Container Durable Object classes must be re-exported from the Worker entry so wrangler can bind them.
+// MoqContainer is LIVE; the egress-strand classes (#134) are INERT — their [[migrations]] new_sqlite_classes
+// entries exist so the worker parses/dry-run-deploys, but their [[containers]] binding blocks stay COMMENTED.
+export { MoqContainer, SrtContainer, FfmpegContainer, NdiContainer, OmtContainer };
 
 export default {
 	async fetch(request: Request, env: BridgeEnv & MoqEnv): Promise<Response> {

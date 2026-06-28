@@ -14,12 +14,13 @@
 // Trust model (see threat-model.md): bridge.wave.online sits BEHIND the WAVE API gateway. The gateway runs
 // authorize → scope(srt:read|srt:write) → entitlement → meter, then forwards with x-wave-org /
 // x-wave-tier attribution headers. This worker is the origin; it makes NO access decision of its own.
-
-/** A minimal container-binding shape (CF Containers `fetch`). Present only once the operator
- *  provisions the [[containers]] block in wrangler.toml AND CF Containers is enabled. */
-export interface ContainerBinding {
-	fetch(request: Request): Promise<Response>;
-}
+//
+// BINDING SHAPE (task #134): every container binding here is a Durable-Object-backed CF Container — the
+// SAME shape the live MoQ strand uses (src/moq.ts). The binding is a `DurableObjectNamespace<X>`, reached
+// via `getContainer(ns, id).fetch()`; a DurableObjectNamespace exposes `idFromName`, NOT a top-level
+// `.fetch`. So activation is gated on `typeof ns?.idFromName === "function"` (never `?.fetch`).
+import { getContainer } from "@cloudflare/containers";
+import type { SrtContainer, FfmpegContainer, NdiContainer, OmtContainer } from "./containers";
 
 export interface BridgeEnv {
 	/** Default-OFF activation flag. Unset/"false" = honest 501 for every protocol. Flipping to "true"
@@ -27,16 +28,32 @@ export interface BridgeEnv {
 	 *  still fail-closes to its typed 501 (no fake transport on any protocol). */
 	BRIDGE_FORWARD_ENABLED?: string;
 	/** CF Container binding for the SRT↔MoQ bridge. Absent today (image unpushed + Containers off). */
-	SRT_BRIDGE?: ContainerBinding;
+	SRT_BRIDGE?: DurableObjectNamespace<SrtContainer>;
 	/** CF Container binding for the NDI↔MoQ bridge. Absent today (license-gated #169 + image unpushed). */
-	NDI_BRIDGE?: ContainerBinding;
+	NDI_BRIDGE?: DurableObjectNamespace<NdiContainer>;
 	/** CF Container binding for the OMT (Open Media Transport) bridge. Absent today (image unpushed +
 	 *  Containers off). OMT is open-spec — NO license gate (unlike NDI), so it has one fewer blocker. */
-	OMT_BRIDGE?: ContainerBinding;
+	OMT_BRIDGE?: DurableObjectNamespace<OmtContainer>;
 	/** CF Container binding for the ffmpeg file-playout stage — the RECORDED-first egress engine that
 	 *  PULLs a finalized R2 recording (outbound GET on `objectUrl`) → demux → re-encode → feeds a
 	 *  transport (SRT/NDI/OMT). Absent today (image unpushed + Containers off). */
-	FFMPEG_BRIDGE?: ContainerBinding;
+	FFMPEG_BRIDGE?: DurableObjectNamespace<FfmpegContainer>;
+}
+
+/** TRUE when a binding is a real DurableObjectNamespace (exposes `idFromName`) — the shape `getContainer`
+ *  needs. Mirrors src/moq.ts's `moqActivated`. A DurableObjectNamespace has NO top-level `.fetch`. */
+export function bindingPresent(ns: { idFromName?: unknown } | undefined): boolean {
+	return typeof ns?.idFromName === "function";
+}
+
+/** Forward a request to a container behind a DurableObjectNamespace, the MoQ way: one instance per call
+ *  (crypto.randomUUID spreads load across the autoscale pool). The caller has already proven the binding
+ *  is present (`bindingPresent`) and the flag is on. */
+export function forwardToContainer(
+	ns: DurableObjectNamespace<SrtContainer | FfmpegContainer | NdiContainer | OmtContainer>,
+	request: Request,
+): Promise<Response> {
+	return getContainer(ns, crypto.randomUUID()).fetch(request);
 }
 
 /** Seconds a client should wait before retrying — activation is operator-gated, not transient. */
@@ -48,7 +65,7 @@ const SRT_SCOPES = { read: "srt:read", write: "srt:write" } as const;
 
 /** TRUE only when the forward flag is on AND a real container binding exists. Today: always false. */
 function srtActivated(env: BridgeEnv): boolean {
-	return env.BRIDGE_FORWARD_ENABLED === "true" && typeof env.SRT_BRIDGE?.fetch === "function";
+	return env.BRIDGE_FORWARD_ENABLED === "true" && bindingPresent(env.SRT_BRIDGE);
 }
 
 /** Honest "not activated yet" body — accurate machine-readable state for agents. Claims nothing live. */
@@ -81,9 +98,9 @@ function notActivatedBody(method: string) {
  */
 export async function handleSrt(request: Request, env: BridgeEnv): Promise<Response> {
 	if (srtActivated(env)) {
-		// SHAPE: hand the request to the SRT container. Inert until the image + CF Containers land.
-		// The gateway has already authorized/scoped/metered upstream; this is a pure forward.
-		return env.SRT_BRIDGE!.fetch(request);
+		// SHAPE: hand the request to the SRT container via getContainer (the MoQ pattern). Inert until the
+		// image + CF Containers land. The gateway has already authorized/scoped/metered upstream — pure forward.
+		return forwardToContainer(env.SRT_BRIDGE!, request);
 	}
 	return Response.json(notActivatedBody(request.method), {
 		status: 501,
@@ -94,4 +111,4 @@ export async function handleSrt(request: Request, env: BridgeEnv): Promise<Respo
 	});
 }
 
-export const __testing = { SRT_SCOPES, SRT_RETRY_AFTER_SECONDS, srtActivated, notActivatedBody };
+export const __testing = { SRT_SCOPES, SRT_RETRY_AFTER_SECONDS, srtActivated, notActivatedBody, bindingPresent };
