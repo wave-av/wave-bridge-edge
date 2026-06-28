@@ -19,7 +19,7 @@ import { env } from "cloudflare:test";
 // which the workerd runtime lacks). This is the inert-leak guard's source of truth: the actual config.
 import wranglerToml from "../wrangler.toml?raw";
 import { describe, expect, it, vi } from "vitest";
-import { selectEgress, selectRecordedPlayout, handleEgress, type RealtimeEgressSource } from "../src/egress";
+import { selectEgress, selectRecordedPlayout, handleEgress, __testing, type RealtimeEgressSource } from "../src/egress";
 import { handleSrt, type BridgeEnv, type ContainerBinding } from "../src/srt";
 import { handleNdi } from "../src/ndi";
 import { handleOmt } from "../src/omt";
@@ -37,6 +37,7 @@ function source(overrides: Partial<RealtimeEgressSource> = {}): RealtimeEgressSo
 		sessionId: "sess_demo",
 		objectUrl: "https://r2.example/org_demo/realtime-recordings/sess_demo/recording.webm?sig=x",
 		target: "srt",
+		destUrl: "srt://listener.example:9000?mode=caller",
 		...overrides,
 	};
 }
@@ -231,8 +232,14 @@ describe("handleEgress — the realtime→baseband egress ENTRY route (#73 P1.5)
 	});
 
 	it("recorded descriptor for EVERY routable target still lands on the honest playout 501 (no fake stream)", async () => {
+		// SRT dials a destUrl; NDI/OMT announce by name (no dial-out URL → destUrl omitted for them).
+		const byTarget = {
+			srt: source({ target: "srt", destUrl: "srt://listener.example:9000?mode=caller" }),
+			ndi: source({ target: "ndi", destUrl: undefined, destName: "WAVE Egress" }),
+			omt: source({ target: "omt", destUrl: undefined, destName: "WAVE Egress" }),
+		} as const;
 		for (const target of ["srt", "ndi", "omt"] as const) {
-			const res = await handleEgress(post(source({ target })), baseEnv);
+			const res = await handleEgress(post(byTarget[target]), baseEnv);
 			expect(res.status).toBe(501);
 			expect(((await res.json()) as Record<string, unknown>).error).toBe("FFMPEG_PLAYOUT_NOT_ACTIVATED");
 		}
@@ -351,6 +358,84 @@ describe("(e) wrangler-inert guard — the seam arms NOTHING", () => {
 
 	it("BRIDGE_FORWARD_ENABLED stays \"false\" (the operator-gate is closed)", () => {
 		expect(wrangler).toMatch(/^BRIDGE_FORWARD_ENABLED\s*=\s*"false"/m);
+	});
+});
+
+describe("destUrl — validated, SSRF-guarded egress destination (validate-untrusted-input-before-sink)", () => {
+	const { validateSource } = __testing;
+	function body(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+		return {
+			mode: "recorded",
+			org: "o",
+			sessionId: "s",
+			objectUrl: "https://r2/x",
+			target: "srt",
+			destUrl: "srt://listener.example:9000?mode=caller",
+			...overrides,
+		};
+	}
+
+	it("srt: a valid srt:// destUrl is accepted and normalized through", () => {
+		const v = validateSource(body());
+		expect(v.ok).toBe(true);
+		if (v.ok) expect(v.source.destUrl).toBe("srt://listener.example:9000?mode=caller");
+	});
+
+	it("srt: a MISSING destUrl → 400 actionable reason (a wire sender needs an address)", () => {
+		const v = validateSource(body({ destUrl: undefined }));
+		expect(v.ok).toBe(false);
+		if (!v.ok) expect(v.reason).toContain("srt egress requires a destUrl");
+	});
+
+	it("srt: a non-srt scheme (http/file/rtmp) → rejected before it can reach an ffmpeg sink", () => {
+		for (const bad of ["http://h:9000", "file:///etc/passwd", "rtmp://h/app"]) {
+			const v = validateSource(body({ destUrl: bad }));
+			expect(v.ok).toBe(false);
+			if (!v.ok) expect(v.reason).toContain("scheme not allowed");
+		}
+	});
+
+	it("srt: SSRF guard rejects loopback / link-local hosts", () => {
+		for (const bad of [
+			"srt://localhost:9000",
+			"srt://127.0.0.1:9000",
+			"srt://0.0.0.0:9000",
+			"srt://169.254.1.1:9000",
+		]) {
+			const v = validateSource(body({ destUrl: bad }));
+			expect(v.ok).toBe(false);
+			if (!v.ok) expect(v.reason).toContain("not allowed");
+		}
+	});
+
+	it("srt: an out-of-range port → rejected (unparseable or out-of-range, never accepted)", () => {
+		const v = validateSource(body({ destUrl: "srt://h:99999" }));
+		expect(v.ok).toBe(false);
+	});
+
+	it("ndi/omt: announce by name → a destUrl with ANY scheme is rejected (no sink smuggling)", () => {
+		for (const target of ["ndi", "omt"] as const) {
+			const v = validateSource(body({ target, destUrl: "srt://h:9000" }));
+			expect(v.ok).toBe(false);
+			if (!v.ok) expect(v.reason).toContain("scheme not allowed");
+		}
+	});
+
+	it("ndi/omt: no destUrl + optional destName is accepted", () => {
+		for (const target of ["ndi", "omt"] as const) {
+			const v = validateSource(body({ target, destUrl: undefined, destName: "WAVE Egress" }));
+			expect(v.ok).toBe(true);
+			if (v.ok) {
+				expect(v.source.destUrl).toBeUndefined();
+				expect(v.source.destName).toBe("WAVE Egress");
+			}
+		}
+	});
+
+	it("a non-string destName → 400", () => {
+		const v = validateSource(body({ target: "ndi", destUrl: undefined, destName: 42 }));
+		expect(v.ok).toBe(false);
+		if (!v.ok) expect(v.reason).toContain("destName");
 	});
 });
 

@@ -42,7 +42,29 @@ export interface RealtimeEgressSource {
 	moqTrack?: string;
 	/** Which baseband transport to egress to. SRT, NDI, OMT each route to their own honest-501 handler. */
 	target: "srt" | "ndi" | "omt";
+	/**
+	 * WHERE the container's sender pushes the egressed baseband stream — the dial-OUT address (e.g. a
+	 * customer `srt://host:9000?mode=caller` listener; cf. runbook Step 7). REQUIRED for `srt` (a wire
+	 * sender needs an address); not used for `ndi`/`omt`, which ANNOUNCE on the local network by name
+	 * (`destName`) rather than dialing a URL.
+	 *
+	 * UNTRUSTED input that becomes an ffmpeg OUTPUT URL (a sink). It is validated against a per-target
+	 * SCHEME allowlist and an SSRF host guard BEFORE acceptance (validate-untrusted-input-before-sink /
+	 * ssrf-guard-before-user-supplied-url-fetch) — never passed through raw. Today every armed path still
+	 * fail-closes to its honest 501, so this is a typed, validated descriptor field, not a live dial.
+	 */
+	destUrl?: string;
+	/** NDI/OMT announced source NAME (the network-discoverable label) used when there is no dial-out URL. */
+	destName?: string;
 }
+
+/** Per-target dial-out URL scheme allowlist. SRT egress dials `srt://`; NDI/OMT announce by name (no URL),
+ *  so they accept none here. Anything else (http/file/rtmp/…) is rejected before it can reach an ffmpeg sink. */
+const DEST_SCHEMES: Record<RealtimeEgressSource["target"], readonly string[]> = {
+	srt: ["srt:"],
+	ndi: [],
+	omt: [],
+};
 
 /** Baseband transports that have a real bridge route. The full inert matrix: SRT, NDI, OMT. Each handler
  *  fail-closes to its own typed `*_BRIDGE_NOT_ACTIVATED` 501 unless its `[[containers]]` binding is bound. */
@@ -109,6 +131,50 @@ export function selectRecordedPlayout(
 /** Seconds a client should wait before retrying a deferred egress path — operator-gated, not transient. */
 const EGRESS_RETRY_AFTER_SECONDS = 86_400; // 24h: productization gate, mirrors the per-protocol handlers.
 
+/**
+ * Validate an untrusted egress DESTINATION URL for a given target (validate-untrusted-input-before-sink).
+ * Pure + total (never throws). Enforces, before the value can ever reach an ffmpeg output sink:
+ *   1. SCHEME allowlist per target (`srt:` only for SRT; ndi/omt take no URL — see DEST_SCHEMES).
+ *   2. SSRF host guard: a real hostname is required, and loopback / link-local / unspecified hosts
+ *      (`localhost`, `127.*`, `::1`, `0.0.0.0`, `169.254.*`) are rejected — a sender must NOT be pointed
+ *      at the edge's own loopback (ssrf-guard-before-user-supplied-url-fetch).
+ * Returns the normalized URL string on success, or an actionable reason. (SRT URLs aren't WHATWG-special,
+ * so we parse via a normalized `http(s)` shadow to extract host/port deterministically.)
+ */
+function validateDest(
+	raw: string,
+	target: RealtimeEgressSource["target"],
+): { ok: true; destUrl: string } | { ok: false; reason: string } {
+	const allowed = DEST_SCHEMES[target];
+	const colon = raw.indexOf(":");
+	if (colon <= 0) return { ok: false, reason: "destUrl must be an absolute URL with a scheme" };
+	const scheme = raw.slice(0, colon + 1).toLowerCase();
+	if (!allowed.includes(scheme))
+		return { ok: false, reason: `destUrl scheme not allowed for ${target} (allowed: ${allowed.join(",") || "none"})` };
+	// SRT URLs are not WHATWG-"special", so `new URL("srt://h:9000")` won't populate host/port. Parse the
+	// authority via an http shadow (scheme swapped for parsing only — the returned value keeps `srt:`).
+	let host: string;
+	let port: string;
+	try {
+		const shadow = new URL(`http:${raw.slice(colon + 1)}`);
+		host = shadow.hostname.toLowerCase();
+		port = shadow.port;
+	} catch {
+		return { ok: false, reason: "destUrl is not a parseable URL" };
+	}
+	if (host.length === 0) return { ok: false, reason: "destUrl must include a host" };
+	const blocked =
+		host === "localhost" ||
+		host === "0.0.0.0" ||
+		host === "::1" ||
+		host.startsWith("127.") ||
+		host.startsWith("169.254."); // link-local
+	if (blocked) return { ok: false, reason: "destUrl host is not allowed (loopback/link-local rejected)" };
+	if (port !== "" && (Number(port) < 1 || Number(port) > 65535))
+		return { ok: false, reason: "destUrl port is out of range" };
+	return { ok: true, destUrl: raw };
+}
+
 /** Validate an untrusted request body into a typed `RealtimeEgressSource`, or an actionable reason.
  *  Pure + total (never throws): the worker route turns `ok:false` into a typed 400, never a stream. */
 function validateSource(
@@ -125,6 +191,23 @@ function validateSource(
 		return { ok: false, reason: "recorded mode requires a signed objectUrl" };
 	if (b.mode === "live" && (typeof b.moqTrack !== "string" || b.moqTrack.length === 0))
 		return { ok: false, reason: "live mode requires a moqTrack name" };
+	// Destination: SRT egress dials OUT to a wire address → destUrl REQUIRED + validated (scheme + SSRF).
+	// NDI/OMT announce on the LAN by name → no dial-out URL; a destUrl, if supplied, is rejected (no scheme
+	// is allowed for them) so a caller can't smuggle an ffmpeg sink in. `destName` is an optional label.
+	let destUrl: string | undefined;
+	if (b.target === "srt") {
+		if (typeof b.destUrl !== "string" || b.destUrl.length === 0)
+			return { ok: false, reason: "srt egress requires a destUrl (e.g. srt://host:9000?mode=caller)" };
+		const d = validateDest(b.destUrl, b.target);
+		if (!d.ok) return { ok: false, reason: d.reason };
+		destUrl = d.destUrl;
+	} else if (typeof b.destUrl === "string" && b.destUrl.length > 0) {
+		const d = validateDest(b.destUrl, b.target);
+		if (!d.ok) return { ok: false, reason: d.reason };
+		destUrl = d.destUrl;
+	}
+	if (b.destName !== undefined && typeof b.destName !== "string")
+		return { ok: false, reason: "destName must be a string" };
 	return {
 		ok: true,
 		source: {
@@ -134,6 +217,8 @@ function validateSource(
 			objectUrl: typeof b.objectUrl === "string" ? b.objectUrl : undefined,
 			moqTrack: typeof b.moqTrack === "string" ? b.moqTrack : undefined,
 			target: b.target,
+			destUrl,
+			destName: typeof b.destName === "string" ? b.destName : undefined,
 		},
 	};
 }
@@ -247,4 +332,4 @@ function egressBadRequest(reason: string): Response {
 //     `selectRecordedPlayout` routes to; the wire transport stays the per-protocol `*_BRIDGE` above.
 // All of the above stay dormant behind the operator-gate (`*_BRIDGE` binding + BRIDGE_FORWARD_ENABLED).
 
-export const __testing = { EGRESS_HANDLERS, validateSource, EGRESS_RETRY_AFTER_SECONDS };
+export const __testing = { EGRESS_HANDLERS, validateSource, validateDest, DEST_SCHEMES, EGRESS_RETRY_AFTER_SECONDS };
