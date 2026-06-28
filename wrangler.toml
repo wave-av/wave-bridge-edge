@@ -71,54 +71,71 @@ class_name = "MoqContainer"
 tag = "v1"
 new_sqlite_classes = ["MoqContainer"]
 
-# SRT container binding — egress matrix (#73). OPERATOR-GATED on TWO fronts: the containers/srt image is
-# unpushed (egress adapter is a scaffold) AND CF Containers is off. The binding name MUST be SRT_BRIDGE
-# (src/srt.ts reads env.SRT_BRIDGE). Build mirrors the live MoQ block's current schema (class_name +
-# durable_objects + migration), built at deploy from the egress Dockerfile. Worker reaches it via
-# getContainer(). The egress adapter (containers/srt/egress) does MoQ/file → SRT CALLER push-out; libsrt
-# is BSD (no license gate, unlike NDI). UNCOMMENT only after the image is built+pushed AND Containers on.
+# Egress-strand DO classes (#134) — register SrtContainer/FfmpegContainer/NdiContainer/OmtContainer so the
+# worker parses + dry-run-deploys with all four exported classes. REGISTERING THE CLASS IS INERT: it only
+# declares the SQLite-backed DO class exists; it binds NO container and opens NO UDP/transport. The actual
+# [[containers]] + [[durable_objects.bindings]] blocks below stay COMMENTED, and BRIDGE_FORWARD_ENABLED stays
+# "false" — so no egress strand can run. This migration lets the live MoQ container deploy alone today while
+# the egress classes wait, dormant, for an operator to uncomment their binding + build their image.
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["SrtContainer", "FfmpegContainer", "NdiContainer", "OmtContainer"]
+
+# SRT container binding — egress matrix (#73 / #134). OPERATOR-GATED on TWO fronts: the containers/srt image
+# is unpushed (egress adapter is a scaffold) AND CF Containers is off. The binding name MUST be SRT_BRIDGE
+# (src/srt.ts reads env.SRT_BRIDGE). Mirrors the live MoQ block's current schema (class_name + durable_objects
+# binding); the Worker reaches it via getContainer(). The egress adapter (containers/srt/egress) does MoQ/file
+# → SRT CALLER push-out; libsrt is BSD (no license gate, unlike NDI). UNCOMMENT only after the image is
+# built+pushed AND Containers on. (Class is already registered in [[migrations]] v2 above — inert until bound.)
 # [[containers]]
 # class_name = "SrtContainer"
-# image = "./containers/srt/Dockerfile"
+# image = "./containers/srt/egress/Dockerfile"
 # max_instances = 3
 #
 # [[durable_objects.bindings]]
 # name = "SRT_BRIDGE"
 # class_name = "SrtContainer"
+
+# NDI container binding — Wave-2 NDI bridge (#134; NDI 6 Discovery Server + Go adapter that bridges to MoQ).
+# OPERATOR-GATED ON THREE FRONTS (one more than SRT): the containers/ndi image is unpushed AND CF Containers
+# is off AND the Vizrt NDI Advanced SDK redistribution clause is unresolved (#169 NDI Developer Program).
+# `libndi_advanced` is NEVER bundled into the image — the adapter fetches it at runtime from a Vizrt-authorized
+# URL once licensing clears. The binding name MUST be NDI_BRIDGE (src/ndi.ts reads env.NDI_BRIDGE). Same
+# class_name + durable_objects schema as the live MoQ block. (Class registered in [[migrations]] v2 above.)
+# [[containers]]
+# class_name = "NdiContainer"
+# image = "./containers/ndi/Dockerfile"
+# max_instances = 3
 #
-# [[migrations]]
-# tag = "v2"
-# new_sqlite_classes = ["SrtContainer"]
+# [[durable_objects.bindings]]
+# name = "NDI_BRIDGE"
+# class_name = "NdiContainer"
 
-# NDI container binding — Wave-2 NDI bridge (NDI 6 Discovery Server + Go adapter that bridges to MoQ).
-# OPERATOR-GATED ON THREE FRONTS (one more than SRT): the containers/ndi image is unpushed AND CF
-# Containers is off AND Vizrt NDI Advanced SDK redistribution clause is unresolved (#169 NDI Developer
-# Program). `libndi_advanced` is NEVER bundled into the image — the adapter fetches it at runtime from
-# a Vizrt-authorized URL once licensing clears. The binding name MUST be NDI_BRIDGE (src/ndi.ts reads
-# env.NDI_BRIDGE).
+# OMT (Open Media Transport) container binding — egress matrix (#73 / #134). OPERATOR-GATED on TWO fronts (one
+# FEWER than NDI: OMT is open-spec, NO Vizrt-style redistribution license): the containers/omt image is unpushed
+# (scaffold) AND CF Containers is off. The binding name MUST be OMT_BRIDGE (src/omt.ts reads env.OMT_BRIDGE).
+# .NET 8 + libomtnet + libvmx + a Go control plane. Same class_name + durable_objects schema as the MoQ block.
+# (Class registered in [[migrations]] v2 above — inert until bound.)
 # [[containers]]
-# name = "ndi-bridge"
-# binding = "NDI_BRIDGE"
-# image = "docker.io/wave-av/wave-ndi-bridge:0.0.0-scaffold"
-# instance_type = "standard"  # NDI 6 HDR + WAN discovery ≈ standard tier
+# class_name = "OmtContainer"
+# image = "./containers/omt/Dockerfile"
+# max_instances = 3
+#
+# [[durable_objects.bindings]]
+# name = "OMT_BRIDGE"
+# class_name = "OmtContainer"
 
-# OMT (Open Media Transport) container binding — egress matrix (#73). OPERATOR-GATED on TWO fronts (one
-# FEWER than NDI: OMT is open-spec, NO Vizrt-style redistribution license): the containers/omt image is
-# unpushed (scaffold) AND CF Containers is off. The binding name MUST be OMT_BRIDGE (src/omt.ts reads
-# env.OMT_BRIDGE). .NET 8 + libomtnet + libvmx + a Go control plane (gateway scope/meter/settle).
-# [[containers]]
-# name = "omt-bridge"
-# binding = "OMT_BRIDGE"
-# image = "docker.io/wave-av/wave-omt-bridge:0.0.0-scaffold"
-# instance_type = "standard"  # .NET 8 + libomtnet ≈ standard tier
-
-# FFmpeg file-playout container binding — the RECORDED-first egress ENGINE (#73, contract ADR). PULLs a
+# FFmpeg file-playout container binding — the RECORDED-first egress ENGINE (#73 / #134, contract ADR). PULLs a
 # finalized R2 recording (outbound signed GET on objectUrl) → ffmpeg 8.1.1 demux/transcode → feeds the
-# SRT/NDI/OMT sender. OPERATOR-GATED: the containers/ffmpeg image is unpushed (scaffold) AND CF Containers
-# is off. The binding name MUST be FFMPEG_BRIDGE (src/ffmpeg.ts reads env.FFMPEG_BRIDGE). No R2 creds live
-# in this container (single-writer A-DO invariant: the DO/driver owns R2; this stage is pure transcode).
+# SRT/NDI/OMT sender. OPERATOR-GATED: the containers/ffmpeg image is unpushed (scaffold) AND CF Containers is
+# off. The binding name MUST be FFMPEG_BRIDGE (src/ffmpeg.ts reads env.FFMPEG_BRIDGE). No R2 creds live in this
+# container (single-writer A-DO invariant: the DO/driver owns R2; this stage is pure transcode). Same class_name
+# + durable_objects schema as the MoQ block. (Class registered in [[migrations]] v2 above — inert until bound.)
 # [[containers]]
-# name = "ffmpeg-playout"
-# binding = "FFMPEG_BRIDGE"
-# image = "docker.io/wave-av/wave-ffmpeg-bridge:0.0.0-scaffold"
-# instance_type = "standard"  # ffmpeg AV2/AV1/H.264 transcode ≈ standard tier (max for AV2 heavy paths)
+# class_name = "FfmpegContainer"
+# image = "./containers/ffmpeg/Dockerfile"
+# max_instances = 3
+#
+# [[durable_objects.bindings]]
+# name = "FFMPEG_BRIDGE"
+# class_name = "FfmpegContainer"

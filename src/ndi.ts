@@ -19,7 +19,7 @@
 // authorize → scope(ndi:read|ndi:write) → entitlement → meter, then forwards with x-wave-org /
 // x-wave-tier attribution headers. This worker is the origin; it makes NO access decision of its own.
 
-import type { BridgeEnv } from "./srt";
+import { type BridgeEnv, bindingPresent, forwardToContainer } from "./srt";
 
 /** Seconds a client should wait before retrying — activation is operator-gated, not transient. */
 const NDI_RETRY_AFTER_SECONDS = 86_400; // 24h: this is a productization gate, not a blip.
@@ -30,7 +30,7 @@ const NDI_SCOPES = { read: "ndi:read", write: "ndi:write" } as const;
 
 /** TRUE only when the forward flag is on AND a real container binding exists. Today: always false. */
 function ndiActivated(env: BridgeEnv): boolean {
-	return env.BRIDGE_FORWARD_ENABLED === "true" && typeof env.NDI_BRIDGE?.fetch === "function";
+	return env.BRIDGE_FORWARD_ENABLED === "true" && bindingPresent(env.NDI_BRIDGE);
 }
 
 /** Honest "not activated yet" body — accurate machine-readable state for agents. Claims nothing live. */
@@ -65,9 +65,9 @@ function notActivatedBody(method: string) {
  */
 export async function handleNdi(request: Request, env: BridgeEnv): Promise<Response> {
 	if (ndiActivated(env)) {
-		// SHAPE: hand the request to the NDI container. Inert until the image + CF Containers land.
-		// The gateway has already authorized/scoped/metered upstream; this is a pure forward.
-		return env.NDI_BRIDGE!.fetch(request);
+		// SHAPE: hand the request to the NDI container via getContainer (the MoQ pattern). Inert until the
+		// image + CF Containers land. The gateway has already authorized/scoped/metered upstream — pure forward.
+		return forwardToContainer(env.NDI_BRIDGE!, request);
 	}
 	return Response.json(notActivatedBody(request.method), {
 		status: 501,

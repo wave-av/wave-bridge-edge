@@ -14,12 +14,24 @@
 //   (f) /srt and /ndi are independent — activating one does not activate the other.
 
 import { env } from "cloudflare:test";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/worker";
-import type { BridgeEnv, ContainerBinding } from "../src/srt";
+import type { BridgeEnv } from "../src/srt";
+
+// Mock the CF Containers helper so the activated-forward path (getContainer(ns,id).fetch()) is testable
+// without a real DO runtime — mirrors test/moq.spec.ts. A "bound" binding is one exposing idFromName.
+const containerFetch = vi.fn(async (r: Request) => new Response(`forwarded:${r.method}`, { status: 200 }));
+vi.mock("@cloudflare/containers", () => ({
+	Container: class {},
+	getContainer: () => ({ fetch: containerFetch }),
+}));
 
 type WorkerEnv = Parameters<typeof worker.fetch>[1];
 const baseEnv = env as unknown as BridgeEnv;
+/** Minimal DurableObjectNamespace stub — present when it exposes idFromName (what bindingPresent checks). */
+const boundBinding = { idFromName: () => ({}) } as unknown as NonNullable<BridgeEnv["NDI_BRIDGE"]>;
+
+afterEach(() => containerFetch.mockClear());
 
 async function call(req: Request, overrides: Partial<BridgeEnv> = {}): Promise<Response> {
 	return worker.fetch(req, { ...baseEnv, ...overrides } as WorkerEnv);
@@ -74,36 +86,31 @@ describe("NDI forward shape — fail-closed, never fabricates transport", () => 
 	});
 
 	it("flag OFF but a binding present → still 501 (both conditions required to activate)", async () => {
-		const stub: ContainerBinding = { fetch: vi.fn(async () => new Response("container", { status: 200 })) };
 		const res = await call(new Request("https://bridge.wave.online/ndi"), {
 			BRIDGE_FORWARD_ENABLED: "false",
-			NDI_BRIDGE: stub,
+			NDI_BRIDGE: boundBinding,
 		});
 		expect(res.status).toBe(501);
-		expect(stub.fetch).not.toHaveBeenCalled();
+		expect(containerFetch).not.toHaveBeenCalled();
 	});
 
 	it("flag ON + real binding present → forwards verbatim to the container (shape works, no lie)", async () => {
 		const inbound = new Request("https://bridge.wave.online/ndi/play", { method: "POST" });
-		const stub: ContainerBinding = {
-			fetch: vi.fn(async (r: Request) => new Response(`forwarded:${r.method}`, { status: 200 })),
-		};
-		const res = await call(inbound, { BRIDGE_FORWARD_ENABLED: "true", NDI_BRIDGE: stub });
+		const res = await call(inbound, { BRIDGE_FORWARD_ENABLED: "true", NDI_BRIDGE: boundBinding });
 		expect(res.status).toBe(200);
 		expect(await res.text()).toBe("forwarded:POST");
-		expect(stub.fetch).toHaveBeenCalledOnce();
+		expect(containerFetch).toHaveBeenCalledOnce();
 	});
 
 	it("activating NDI does NOT auto-activate SRT (per-protocol bindings stay independent)", async () => {
-		const ndiStub: ContainerBinding = { fetch: vi.fn(async () => new Response("ndi", { status: 200 })) };
 		const res = await call(new Request("https://bridge.wave.online/srt"), {
 			BRIDGE_FORWARD_ENABLED: "true",
-			NDI_BRIDGE: ndiStub,
+			NDI_BRIDGE: boundBinding,
 			SRT_BRIDGE: undefined,
 		});
 		expect(res.status).toBe(501);
 		const body = (await res.json()) as Record<string, unknown>;
 		expect(body.error).toBe("SRT_BRIDGE_NOT_ACTIVATED");
-		expect(ndiStub.fetch).not.toHaveBeenCalled();
+		expect(containerFetch).not.toHaveBeenCalled();
 	});
 });

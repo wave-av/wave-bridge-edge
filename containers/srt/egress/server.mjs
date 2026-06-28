@@ -12,9 +12,12 @@
 // runbook docs/runbook-srt-egress-arm.md). /health is live so the Worker's container binding can probe.
 //
 // CONTRACT (per src/egress.ts + contract-rt-to-bridge-egress.md, RECORDED-first):
-//   POST /egress  { objectUrl, target:"srt", srtUrl, org, sessionId }
+//   POST /egress  { objectUrl, target:"srt", destUrl, org, sessionId }
 //     → (FUTURE) fetch(objectUrl) [outbound signed R2 GET] | ffmpeg -i - -f mpegts srt://… [caller push]
-//     → (TODAY)  501 SRT_EGRESS_NOT_IMPLEMENTED, echoing { target, has_object_url, has_srt_url }
+//     → (TODAY)  501 SRT_EGRESS_NOT_IMPLEMENTED, echoing { target, has_object_url, has_dest_url }
+//   FIELD NAME (#134): the dial-OUT address is `destUrl` — the SAME canonical field src/egress.ts validates
+//   + forwards (it was historically `srtUrl` here, a contract drift). `srtUrl` is still read as a cheap
+//   back-compat alias so an older caller doesn't silently lose its address, but `destUrl` is canonical.
 //   No R2 creds live here (single-writer A-DO invariant: the DO/driver owns R2; this stage is pure
 //   transcode/egress — it only PULLs the short-lived signed objectUrl it is handed).
 import http from 'node:http';
@@ -51,9 +54,11 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/egress') {
     const d = await readJson(req);
+    // Canonical dial-OUT field is destUrl (#134); accept legacy srtUrl as a back-compat alias.
+    const destUrl = typeof d.destUrl === 'string' ? d.destUrl : typeof d.srtUrl === 'string' ? d.srtUrl : undefined;
     // DESIGN (built+proven on arm — see runbook): with FFMPEG present this would be
     //   const src = await fetch(d.objectUrl);                       // outbound signed R2 GET
-    //   ffmpeg -i pipe:0 -c copy -f mpegts srt://<d.srtUrl>?mode=caller   // push OUT to the customer listener
+    //   ffmpeg -i pipe:0 -c copy -f mpegts srt://<destUrl>?mode=caller   // push OUT to the customer listener
     // and the receipt would be ffmpeg's exit + a first-frame `ffplay srt://…` lock. NONE of that runs yet.
     res.writeHead(501, { 'content-type': 'application/json', 'retry-after': '86400', 'cache-control': 'no-store' });
     res.end(JSON.stringify({
@@ -69,7 +74,7 @@ const server = http.createServer(async (req, res) => {
       received: {
         target: typeof d.target === 'string' ? d.target : null,
         has_object_url: typeof d.objectUrl === 'string',
-        has_srt_url: typeof d.srtUrl === 'string',
+        has_dest_url: typeof destUrl === 'string',
       },
       blockers: [
         'build + push containers/srt egress image (this scaffold has no ffmpeg/libsrt sender yet)',

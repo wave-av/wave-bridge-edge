@@ -18,17 +18,29 @@ import { env } from "cloudflare:test";
 // Raw-import the deployed wrangler.toml as a string (Vite `?raw`, Workers-pool compatible — no node:fs,
 // which the workerd runtime lacks). This is the inert-leak guard's source of truth: the actual config.
 import wranglerToml from "../wrangler.toml?raw";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { selectEgress, selectRecordedPlayout, handleEgress, __testing, type RealtimeEgressSource } from "../src/egress";
-import { handleSrt, type BridgeEnv, type ContainerBinding } from "../src/srt";
+import { handleSrt, type BridgeEnv } from "../src/srt";
 import { handleNdi } from "../src/ndi";
 import { handleOmt } from "../src/omt";
 import { handlePlayout } from "../src/ffmpeg";
 import worker from "../src/worker";
 
+// Mock the CF Containers helper so the activated-forward path (getContainer(ns,id).fetch()) is testable
+// without a real DO runtime — mirrors test/moq.spec.ts. A "bound" binding is one exposing idFromName.
+const containerFetch = vi.fn(async (r: Request) => new Response("fwd", { status: 200, headers: { "x-method": r.method } }));
+vi.mock("@cloudflare/containers", () => ({
+	Container: class {},
+	getContainer: () => ({ fetch: containerFetch }),
+}));
+
 type WorkerEnv = Parameters<typeof worker.fetch>[1];
 
 const baseEnv = env as unknown as BridgeEnv;
+/** Minimal DurableObjectNamespace stub — present when it exposes idFromName (what bindingPresent checks). */
+const boundBinding = { idFromName: () => ({}) } as unknown as NonNullable<BridgeEnv["SRT_BRIDGE"]>;
+
+afterEach(() => containerFetch.mockClear());
 
 function source(overrides: Partial<RealtimeEgressSource> = {}): RealtimeEgressSource {
 	return {
@@ -154,15 +166,14 @@ describe("selectEgress — fail-closed: unconfigured env yields the honest 501, 
 	it("the seam does NOT bypass the gate: flag ON + a real binding still forwards via the SAME handler", async () => {
 		// Proves the seam routes to the unmodified handler whose activation logic is intact — when a
 		// real binding IS present (a stub here), the existing handler forwards. The seam adds nothing.
-		const stub: ContainerBinding = { fetch: vi.fn(async () => new Response("fwd", { status: 200 })) };
 		const handler = selectEgress("srt", baseEnv);
 		const res = await handler!(new Request("https://bridge.wave.online/srt/play", { method: "POST" }), {
 			...baseEnv,
 			BRIDGE_FORWARD_ENABLED: "true",
-			SRT_BRIDGE: stub,
+			SRT_BRIDGE: boundBinding,
 		});
 		expect(res.status).toBe(200);
-		expect(stub.fetch).toHaveBeenCalledOnce();
+		expect(containerFetch).toHaveBeenCalledOnce();
 	});
 });
 
@@ -288,15 +299,14 @@ describe("handleEgress — the realtime→baseband egress ENTRY route (#73 P1.5)
 	});
 
 	it("flag ON + FFMPEG_BRIDGE bound: recorded egress forwards to the playout container (seam doesn't bypass)", async () => {
-		const stub: ContainerBinding = { fetch: vi.fn(async () => new Response("playout-fwd", { status: 200 })) };
 		const res = await handleEgress(post(source({ target: "srt" })), {
 			...baseEnv,
 			BRIDGE_FORWARD_ENABLED: "true",
-			FFMPEG_BRIDGE: stub,
+			FFMPEG_BRIDGE: boundBinding,
 		});
 		expect(res.status).toBe(200);
-		expect(stub.fetch).toHaveBeenCalledOnce();
-		expect(await res.text()).toBe("playout-fwd");
+		expect(containerFetch).toHaveBeenCalledOnce();
+		expect(await res.text()).toBe("fwd");
 	});
 
 	it("end-to-end via worker.fetch: POST /egress recorded → honest playout 501 (route is wired)", async () => {
@@ -330,18 +340,23 @@ describe("(e) wrangler-inert guard — the seam arms NOTHING", () => {
 	});
 
 	it("the NDI_BRIDGE binding stays COMMENTED (inert)", () => {
-		expect(wrangler).not.toMatch(/^\s*binding\s*=\s*"NDI_BRIDGE"/m);
-		expect(wrangler).toMatch(/#\s*binding\s*=\s*"NDI_BRIDGE"/);
+		// NDI now mirrors the live MoQ schema (class_name NdiContainer + durable_objects `name = "NDI_BRIDGE"`).
+		// The only occurrence must be inside a comment; no uncommented `name = "NDI_BRIDGE"` at column 0.
+		expect(wrangler).not.toMatch(/^\s*name\s*=\s*"NDI_BRIDGE"/m);
+		expect(wrangler).toMatch(/#\s*name\s*=\s*"NDI_BRIDGE"/);
+		expect(wrangler).not.toMatch(/^\s*class_name\s*=\s*"NdiContainer"/m);
 	});
 
 	it("the OMT_BRIDGE binding stays COMMENTED (inert)", () => {
-		expect(wrangler).not.toMatch(/^\s*binding\s*=\s*"OMT_BRIDGE"/m);
-		expect(wrangler).toMatch(/#\s*binding\s*=\s*"OMT_BRIDGE"/);
+		expect(wrangler).not.toMatch(/^\s*name\s*=\s*"OMT_BRIDGE"/m);
+		expect(wrangler).toMatch(/#\s*name\s*=\s*"OMT_BRIDGE"/);
+		expect(wrangler).not.toMatch(/^\s*class_name\s*=\s*"OmtContainer"/m);
 	});
 
 	it("the FFMPEG_BRIDGE binding stays COMMENTED (inert)", () => {
-		expect(wrangler).not.toMatch(/^\s*binding\s*=\s*"FFMPEG_BRIDGE"/m);
-		expect(wrangler).toMatch(/#\s*binding\s*=\s*"FFMPEG_BRIDGE"/);
+		expect(wrangler).not.toMatch(/^\s*name\s*=\s*"FFMPEG_BRIDGE"/m);
+		expect(wrangler).toMatch(/#\s*name\s*=\s*"FFMPEG_BRIDGE"/);
+		expect(wrangler).not.toMatch(/^\s*class_name\s*=\s*"FfmpegContainer"/m);
 	});
 
 	it("the ONLY uncommented [[containers]] is the live MoQ block (no protocol egress binding leaked)", () => {
