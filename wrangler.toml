@@ -87,14 +87,20 @@ new_sqlite_classes = ["SrtContainer", "FfmpegContainer", "NdiContainer", "OmtCon
 # binding); the Worker reaches it via getContainer(). The egress adapter (containers/srt/egress) does MoQ/file
 # → SRT CALLER push-out; libsrt is BSD (no license gate, unlike NDI). UNCOMMENT only after the image is
 # built+pushed AND Containers on. (Class is already registered in [[migrations]] v2 above — inert until bound.)
-# [[containers]]
-# class_name = "SrtContainer"
-# image = "./containers/srt/egress/Dockerfile"
-# max_instances = 3
 #
-# [[durable_objects.bindings]]
-# name = "SRT_BRIDGE"
-# class_name = "SrtContainer"
+# ACTIVATED (#53): the egress image now carries a REAL ffmpeg --enable-libsrt sender (containers/srt/egress),
+# so the binding is uncommented. SAFETY: this binding ALONE does NOT arm SRT — src/srt.ts srtActivated()
+# requires the binding present AND BRIDGE_FORWARD_ENABLED="true". The flag stays "false" (see [vars] above),
+# so /srt still returns the honest 501 until an operator flips the flag (the ◆ live crossing; runbook Step 5).
+# Even when armed, /srt forwards to this REAL sender — no fabricated transport at any point.
+[[containers]]
+class_name = "SrtContainer"
+image = "./containers/srt/egress/Dockerfile"
+max_instances = 3
+
+[[durable_objects.bindings]]
+name = "SRT_BRIDGE"
+class_name = "SrtContainer"
 
 # NDI container binding — Wave-2 NDI bridge (#134; NDI 6 Discovery Server + Go adapter that bridges to MoQ).
 # OPERATOR-GATED ON THREE FRONTS (one more than SRT): the containers/ndi image is unpushed AND CF Containers

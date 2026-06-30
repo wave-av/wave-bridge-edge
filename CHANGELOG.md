@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- **SRT egress transport ACTIVATED** (#53) — `containers/srt/egress` is now a REAL sender: the `Dockerfile`
+  builds `ffmpeg --enable-libsrt` + libsrt v1.5.5, and `server.mjs` opens an outbound `srt://` caller session
+  (`ffmpeg -i <objectUrl> -c copy -f mpegts srt://…?mode=caller`), returning a real receipt
+  `{ ok, bytes_sent, ffmpeg_exit }` and fail-closing to an honest 501 if the sender binary is absent. Both
+  URLs are SSRF-guarded before reaching an ffmpeg sink (`srt://`/`https://` + non-loopback only). The
+  `SRT_BRIDGE` `[[containers]]` binding is now UNCOMMENTED in `wrangler.toml`. SAFETY: `/srt` still returns
+  the honest `501 SRT_BRIDGE_NOT_ACTIVATED` until `BRIDGE_FORWARD_ENABLED="true"` (the binding alone does not
+  arm — `srtActivated` requires both), so this change is inert until the operator flips the flag.
 - **Path-scoped `routes` in `wrangler.toml`** so the worker attaches to `bridge.wave.online/{srt,ndi,omt,
   playout,bridge,health}*` directly. Previously the worker had NO route and was invoked only via the
   gateway service-binding, so `curl bridge.wave.online/srt` fell through to the Core-Origin Next.js app's
