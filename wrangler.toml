@@ -25,6 +25,13 @@ workers_dev = false
 #
 # ⚠️ FIRST-DEPLOY AUDIT: before merge takes effect, audit for a stale Worker Route on these patterns
 # that could shadow this worker, and confirm Core-Origin does not also claim `bridge.wave.online/srt*`.
+#
+# srt.wave.online — was an orphaned orange-cloud AAAA 100:: placeholder (no origin -> 530). A wildcard
+# route here puts THIS worker in front of the whole host, which alone kills the 530 (no DNS edit
+# needed). Root `/` serves a static, honest "preview / not yet live" landing page (worker.ts
+# SRT_PREVIEW_HTML) — it makes NO claim of working ingest. Every other path on this host still falls
+# through to the existing handlers above (e.g. /srt -> handleSrt's honest 501) — nothing about the
+# real SRT activation state changes.
 routes = [
   { pattern = "bridge.wave.online/health", zone_name = "wave.online" },
   { pattern = "bridge.wave.online/bridge*", zone_name = "wave.online" },
@@ -33,6 +40,7 @@ routes = [
   { pattern = "bridge.wave.online/omt*", zone_name = "wave.online" },
   { pattern = "bridge.wave.online/playout*", zone_name = "wave.online" },
   { pattern = "bridge.wave.online/egress*", zone_name = "wave.online" },
+  { pattern = "srt.wave.online/*", zone_name = "wave.online" },
 ]
 
 # wave-foundation pin — keep in sync with .foundation-version.

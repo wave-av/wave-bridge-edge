@@ -37,6 +37,16 @@ export default {
 				headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" },
 			});
 		}
+		// srt.wave.online root — was a bare orange-cloud placeholder (530, no origin). The wildcard
+		// route (wrangler.toml) puts this worker in front of the host, which alone kills the 530.
+		// Serve a static, HONEST "preview / not yet live" page here — it makes no promise of working
+		// ingest. Every other path on this host (e.g. /srt) still falls through below to the same
+		// real handlers (handleSrt's honest 501), so activation state is unchanged.
+		if (url.hostname === "srt.wave.online" && url.pathname === "/") {
+			return new Response(SRT_PREVIEW_HTML, {
+				headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300" },
+			});
+		}
 		// MoQ route — LIVE. Forwards to the CF Container running the proven strand, which round-trips
 		// real objects through moq.wave.online. Fail-closes to typed 501 if MOQ_BRIDGE is unbound.
 		if (url.pathname === "/bridge" || url.pathname.startsWith("/bridge/")) {
@@ -101,4 +111,31 @@ const SITEMAP_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://bridge.wave.online/llms.txt</loc></url>
 </urlset>
+`;
+
+// srt.wave.online landing page — static and HONEST. Makes no promise of working ingest; says plainly
+// that the endpoint is a preview / not yet live, and points to the live WAVE surface. This is the
+// ONLY content served at srt.wave.online/; /srt/* on this host still hits handleSrt's real 501.
+const SRT_PREVIEW_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SRT ingest — preview</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 640px;
+    margin: 4rem auto; padding: 0 1.5rem; color: #111; line-height: 1.5; }
+  h1 { font-size: 1.5rem; }
+  a { color: #0645ad; }
+  .badge { display: inline-block; background: #fff3cd; color: #664d03; border: 1px solid #ffe69c;
+    border-radius: 4px; padding: .15rem .5rem; font-size: .85rem; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>SRT ingest &mdash; preview</h1>
+<p><span class="badge">preview</span> This SRT ingest endpoint is <strong>not yet live</strong>. It is
+an early preview of what's coming to WAVE's protocol bridge &mdash; no stream is accepted here today.</p>
+<p>For the live WAVE platform, visit <a href="https://wave.online">wave.online</a>.</p>
+</body>
+</html>
 `;
