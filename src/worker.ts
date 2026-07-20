@@ -10,6 +10,7 @@ import { handlePlayout } from "./ffmpeg";
 import { handleEgress } from "./egress";
 import { handleMoqBridge, MoqContainer, type MoqEnv } from "./moq";
 import { SrtContainer, FfmpegContainer, NdiContainer, OmtContainer } from "./containers";
+import { landingPage } from "./landing";
 
 // CF Container Durable Object classes must be re-exported from the Worker entry so wrangler can bind them.
 // MoqContainer is LIVE; the egress-strand classes (#134) are INERT — their [[migrations]] new_sqlite_classes
@@ -19,6 +20,14 @@ export { MoqContainer, SrtContainer, FfmpegContainer, NdiContainer, OmtContainer
 export default {
 	async fetch(request: Request, env: BridgeEnv & MoqEnv): Promise<Response> {
 		const url = new URL(request.url);
+		if (url.pathname === "/" || url.pathname === "/index.html") {
+			return new Response(landingPage(), {
+				headers: {
+					"content-type": "text/html; charset=utf-8",
+					"x-content-type-options": "nosniff",
+				},
+			});
+		}
 		if (url.pathname === "/health") {
 			return Response.json({
 				ok: true,
