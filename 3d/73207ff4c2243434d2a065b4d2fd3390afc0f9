@@ -1,0 +1,22 @@
+.github/workflows/deploy.yml
+  s_6e7ad4df769349::t_5cb6bd6c141f16 25,38-39
+.npmrc
+  s_6e7ad4df769349::t_01cfa5a1e74fff 3
+  s_6e7ad4df769349::t_d2350ed67487ed 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "3d73207ff4c2243434d2a065b4d2fd3390afc0f9",
+  "prompts": {},
+  "sessions": {
+    "s_6e7ad4df769349": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "91274c95-abfb-4ffd-b243-f2916d2e4e07",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
