@@ -29,6 +29,9 @@ export interface BridgeEnv {
 	BRIDGE_FORWARD_ENABLED?: string;
 	/** CF Container binding for the SRT↔MoQ bridge. Absent today (image unpushed + Containers off). */
 	SRT_BRIDGE?: DurableObjectNamespace<SrtContainer>;
+	/** Warm-pool size: how many stable container shards requests hash across (mirrors src/moq.ts's
+	 *  MOQ_POOL_SIZE). Tunable WITHOUT a code deploy. Absent/invalid → SRT_POOL_SIZE_DEFAULT. */
+	SRT_POOL_SIZE?: string;
 	/** CF Container binding for the NDI↔MoQ bridge. Absent today (license-gated #169 + image unpushed). */
 	NDI_BRIDGE?: DurableObjectNamespace<NdiContainer>;
 	/** CF Container binding for the OMT (Open Media Transport) bridge. Absent today (image unpushed +
@@ -46,22 +49,89 @@ export function bindingPresent(ns: { idFromName?: unknown } | undefined): boolea
 	return typeof ns?.idFromName === "function";
 }
 
-/** Forward a request to a container behind a DurableObjectNamespace, the MoQ way: one instance per call
- *  (crypto.randomUUID spreads load across the autoscale pool). The caller has already proven the binding
- *  is present (`bindingPresent`) and the flag is on. */
-export function forwardToContainer(
-	ns: DurableObjectNamespace<SrtContainer | FfmpegContainer | NdiContainer | OmtContainer>,
-	request: Request,
-): Promise<Response> {
-	return getContainer(ns, crypto.randomUUID()).fetch(request);
-}
-
 /** Seconds a client should wait before retrying — activation is operator-gated, not transient. */
 const SRT_RETRY_AFTER_SECONDS = 86_400; // 24h: this is a productization gate, not a blip.
 
 /** Canonical gateway scopes for this protocol (the API gateway scopes.ts rw("srt"), PR #71 / #281).
  *  GET/HEAD → srt:read, mutating verbs → srt:write. NOT "srt:stream" — read/write is the vocabulary. */
 const SRT_SCOPES = { read: "srt:read", write: "srt:write" } as const;
+
+/** Transient pool-exhaustion / cold-start failure clears in seconds — not the account-gate horizon. */
+const SRT_UNAVAILABLE_RETRY_AFTER_SECONDS = 5;
+
+/** Warm-pool default, mirroring src/moq.ts's MOQ_POOL_SIZE_DEFAULT — see that file's WARM-POOL SCALING
+ *  MODEL doc for the full rationale (stable shard ids reused across requests, bounded by the pool size,
+ *  never a fresh instance per call). */
+const SRT_POOL_SIZE_DEFAULT = 8;
+/** Hard clamp so a fat-fingered env var can't request an unbounded pool. Keep ≥ any real max_instances. */
+const SRT_POOL_SIZE_MAX = 100;
+
+/** Resolve the warm-pool size from env (tunable without a code deploy), clamped to a sane range. */
+function srtPoolSize(env: BridgeEnv): number {
+	const raw = Number(env.SRT_POOL_SIZE);
+	if (!Number.isInteger(raw) || raw < 1) return SRT_POOL_SIZE_DEFAULT;
+	return Math.min(raw, SRT_POOL_SIZE_MAX);
+}
+
+/** Stable DO name for one shard of the warm pool (at most poolSize instances ever alive). */
+function srtContainerId(poolSize: number): string {
+	return `srt-bridge-${Math.floor(Math.random() * poolSize)}`;
+}
+
+/**
+ * CF Containers signals pool exhaustion / cold-start failure by RETURNING a 5xx whose body carries the
+ * runtime marker below — it does NOT throw. Mirrors src/moq.ts's isContainerStartFailure exactly.
+ */
+function isContainerStartFailure(status: number, body: string): boolean {
+	if (status !== 500 && status !== 503) return false;
+	return /maximum number of running container instances|failed to start container/i.test(body);
+}
+
+/** Honest typed receipt for a transient container failure (pool exhausted / cold-start) — not a raw 500. */
+function srtUnavailableBody() {
+	return {
+		error: "SRT_BRIDGE_UNAVAILABLE",
+		protocol: "srt",
+		status: "unavailable",
+		metered: false,
+		live: false,
+		retry_after_seconds: SRT_UNAVAILABLE_RETRY_AFTER_SECONDS,
+	};
+}
+
+/** Build the honest 503 backpressure Response (shared by the throw path and the returned-5xx path). */
+function srtUnavailableResponse(): Response {
+	return Response.json(srtUnavailableBody(), {
+		status: 503,
+		headers: {
+			"retry-after": String(SRT_UNAVAILABLE_RETRY_AFTER_SECONDS),
+			"cache-control": "no-store",
+		},
+	});
+}
+
+/** Forward a request to a container behind a DurableObjectNamespace, the MoQ way: a bounded warm pool of
+ *  stable shard ids (mirrors src/moq.ts's forward path) — never a fresh instance per call. The caller has
+ *  already proven the binding is present (`bindingPresent`) and the flag is on. */
+export async function forwardToContainer(
+	ns: DurableObjectNamespace<SrtContainer | FfmpegContainer | NdiContainer | OmtContainer>,
+	request: Request,
+	poolSize: number = SRT_POOL_SIZE_DEFAULT,
+): Promise<Response> {
+	const container = getContainer(ns, srtContainerId(poolSize));
+	let res: Response;
+	try {
+		res = await container.fetch(request);
+	} catch {
+		return srtUnavailableResponse();
+	}
+	if (!res.ok || !res.body) {
+		const bodyText = await res.text();
+		if (isContainerStartFailure(res.status, bodyText)) return srtUnavailableResponse();
+		return new Response(bodyText, { status: res.status, headers: res.headers });
+	}
+	return res;
+}
 
 /** TRUE only when the forward flag is on AND a real container binding exists. Today: always false. */
 function srtActivated(env: BridgeEnv): boolean {
@@ -100,7 +170,7 @@ export async function handleSrt(request: Request, env: BridgeEnv): Promise<Respo
 	if (srtActivated(env)) {
 		// SHAPE: hand the request to the SRT container via getContainer (the MoQ pattern). Inert until the
 		// image + CF Containers land. The gateway has already authorized/scoped/metered upstream — pure forward.
-		return forwardToContainer(env.SRT_BRIDGE!, request);
+		return forwardToContainer(env.SRT_BRIDGE!, request, srtPoolSize(env));
 	}
 	return Response.json(notActivatedBody(request.method), {
 		status: 501,
@@ -111,4 +181,18 @@ export async function handleSrt(request: Request, env: BridgeEnv): Promise<Respo
 	});
 }
 
-export const __testing = { SRT_SCOPES, SRT_RETRY_AFTER_SECONDS, srtActivated, notActivatedBody, bindingPresent };
+export const __testing = {
+	SRT_SCOPES,
+	SRT_RETRY_AFTER_SECONDS,
+	srtActivated,
+	notActivatedBody,
+	bindingPresent,
+	srtPoolSize,
+	srtContainerId,
+	isContainerStartFailure,
+	srtUnavailableBody,
+	srtUnavailableResponse,
+	SRT_POOL_SIZE_DEFAULT,
+	SRT_POOL_SIZE_MAX,
+	SRT_UNAVAILABLE_RETRY_AFTER_SECONDS,
+};
