@@ -25,9 +25,37 @@ export interface MoqEnv {
 const MOQ_SCOPES = { read: 'moq:read', write: 'moq:write' } as const;
 /** A bounded round-trip is a few seconds; absence is an account/plan gate, not a transient blip. */
 const MOQ_RETRY_AFTER_SECONDS = 3600;
+/** Transient pool-exhaustion / cold-start failure clears in seconds — not the account-gate horizon. */
+const MOQ_UNAVAILABLE_RETRY_AFTER_SECONDS = 5;
+/**
+ * Size of the container-instance ring. MUST match `max_instances` for MoqContainer in wrangler.toml.
+ * Requests hash onto a FIXED set of `moq-bridge-{0..N-1}` DO names so warm instances are REUSED and
+ * the pool cap is never exceeded. A fresh id per call (crypto.randomUUID) instead spins a new cold
+ * instance every time and pins all N slots within one `sleepAfter` window — the exact cause of the
+ * "Maximum number of running container instances exceeded" 500 this ring fixes.
+ */
+const MOQ_POOL_SIZE = 3;
 
 function moqActivated(env: MoqEnv): boolean {
   return typeof env.MOQ_BRIDGE?.idFromName === 'function';
+}
+
+/** Stable DO name for one shard of the bounded container ring (never more than MOQ_POOL_SIZE alive). */
+function moqContainerId(): string {
+  return `moq-bridge-${Math.floor(Math.random() * MOQ_POOL_SIZE)}`;
+}
+
+/** Honest typed receipt for a transient container failure (pool exhausted / cold-start) — not a raw 500. */
+function unavailableBody() {
+  return {
+    error: 'MOQ_BRIDGE_UNAVAILABLE',
+    protocol: 'moq',
+    status: 'unavailable',
+    metered: false,
+    live: false,
+    blockers: ['the hosted MoQ container pool is momentarily saturated or cold-starting; retry shortly'],
+    docs: 'https://bridge.wave.online/llms.txt',
+  };
 }
 
 function notActivatedBody(method: string) {
@@ -58,9 +86,24 @@ export async function handleMoqBridge(request: Request, env: MoqEnv): Promise<Re
   const url = new URL(request.url);
   // Bound the round-trip size at the edge too (defence in depth; the container also caps at 1000).
   const n = Math.max(1, Math.min(1000, Number(url.searchParams.get('n') ?? 100)));
-  // One container instance per call spreads load across the autoscale pool (mux pattern).
-  const container = getContainer(env.MOQ_BRIDGE!, crypto.randomUUID());
-  const res = await container.fetch(new Request(`http://moq/bridge?n=${n}`, { method: 'GET' }));
+  // Route onto the FIXED container ring so warm instances are reused and the pool cap (max_instances)
+  // is never exceeded. A random-per-call id here leaks a fresh cold instance every request → pool
+  // exhaustion → "Maximum number of running container instances exceeded".
+  const container = getContainer(env.MOQ_BRIDGE!, moqContainerId());
+  let res: Response;
+  try {
+    res = await container.fetch(new Request(`http://moq/bridge?n=${n}`, { method: 'GET' }));
+  } catch (err) {
+    // Container failed to START (pool momentarily saturated / cold-start error). Return an honest typed
+    // receipt with a short retry-after — never leak the raw runtime exception as a bare 500.
+    return Response.json(unavailableBody(), {
+      status: 503,
+      headers: {
+        'retry-after': String(MOQ_UNAVAILABLE_RETRY_AFTER_SECONDS),
+        'cache-control': 'no-store',
+      },
+    });
+  }
   // Pass the container's receipt straight through (200 on ok, 502 on a failed round-trip).
   return new Response(res.body, {
     status: res.status,
