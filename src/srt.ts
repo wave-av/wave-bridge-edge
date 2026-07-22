@@ -20,6 +20,7 @@
 // via `getContainer(ns, id).fetch()`; a DurableObjectNamespace exposes `idFromName`, NOT a top-level
 // `.fetch`. So activation is gated on `typeof ns?.idFromName === "function"` (never `?.fetch`).
 import { getContainer } from "@cloudflare/containers";
+import { resolvePoolSize, poolContainerId, isContainerStartFailure, DEFAULT_POOL_SIZE } from "@wave-av/container-pool";
 import type { SrtContainer, FfmpegContainer, NdiContainer, OmtContainer } from "./containers";
 
 export interface BridgeEnv {
@@ -30,7 +31,8 @@ export interface BridgeEnv {
 	/** CF Container binding for the SRT↔MoQ bridge. Absent today (image unpushed + Containers off). */
 	SRT_BRIDGE?: DurableObjectNamespace<SrtContainer>;
 	/** Warm-pool size: how many stable container shards requests hash across (mirrors src/moq.ts's
-	 *  MOQ_POOL_SIZE). Tunable WITHOUT a code deploy. Absent/invalid → SRT_POOL_SIZE_DEFAULT. */
+	 *  MOQ_POOL_SIZE). Tunable WITHOUT a code deploy. Absent/invalid → DEFAULT_POOL_SIZE (from
+	 *  @wave-av/container-pool). */
 	SRT_POOL_SIZE?: string;
 	/** CF Container binding for the NDI↔MoQ bridge. Absent today (license-gated #169 + image unpushed). */
 	NDI_BRIDGE?: DurableObjectNamespace<NdiContainer>;
@@ -59,33 +61,8 @@ const SRT_SCOPES = { read: "srt:read", write: "srt:write" } as const;
 /** Transient pool-exhaustion / cold-start failure clears in seconds — not the account-gate horizon. */
 const SRT_UNAVAILABLE_RETRY_AFTER_SECONDS = 5;
 
-/** Warm-pool default, mirroring src/moq.ts's MOQ_POOL_SIZE_DEFAULT — see that file's WARM-POOL SCALING
- *  MODEL doc for the full rationale (stable shard ids reused across requests, bounded by the pool size,
- *  never a fresh instance per call). */
-const SRT_POOL_SIZE_DEFAULT = 8;
-/** Hard clamp so a fat-fingered env var can't request an unbounded pool. Keep ≥ any real max_instances. */
-const SRT_POOL_SIZE_MAX = 100;
-
-/** Resolve the warm-pool size from env (tunable without a code deploy), clamped to a sane range. */
-function srtPoolSize(env: BridgeEnv): number {
-	const raw = Number(env.SRT_POOL_SIZE);
-	if (!Number.isInteger(raw) || raw < 1) return SRT_POOL_SIZE_DEFAULT;
-	return Math.min(raw, SRT_POOL_SIZE_MAX);
-}
-
-/** Stable DO name for one shard of the warm pool (at most poolSize instances ever alive). */
-function srtContainerId(poolSize: number): string {
-	return `srt-bridge-${Math.floor(Math.random() * poolSize)}`;
-}
-
-/**
- * CF Containers signals pool exhaustion / cold-start failure by RETURNING a 5xx whose body carries the
- * runtime marker below — it does NOT throw. Mirrors src/moq.ts's isContainerStartFailure exactly.
- */
-function isContainerStartFailure(status: number, body: string): boolean {
-	if (status !== 500 && status !== 503) return false;
-	return /maximum number of running container instances|failed to start container/i.test(body);
-}
+/** Warm-pool size clamp / stable-id / pool-exhaustion helpers live in @wave-av/container-pool (shared
+ *  across every spoke, mirrors src/moq.ts) — see the import above. */
 
 /** Honest typed receipt for a transient container failure (pool exhausted / cold-start) — not a raw 500. */
 function srtUnavailableBody() {
@@ -116,9 +93,9 @@ function srtUnavailableResponse(): Response {
 export async function forwardToContainer(
 	ns: DurableObjectNamespace<SrtContainer | FfmpegContainer | NdiContainer | OmtContainer>,
 	request: Request,
-	poolSize: number = SRT_POOL_SIZE_DEFAULT,
+	poolSize: number = DEFAULT_POOL_SIZE,
 ): Promise<Response> {
-	const container = getContainer(ns, srtContainerId(poolSize));
+	const container = getContainer(ns, poolContainerId("srt-bridge", poolSize));
 	let res: Response;
 	try {
 		res = await container.fetch(request);
@@ -170,7 +147,7 @@ export async function handleSrt(request: Request, env: BridgeEnv): Promise<Respo
 	if (srtActivated(env)) {
 		// SHAPE: hand the request to the SRT container via getContainer (the MoQ pattern). Inert until the
 		// image + CF Containers land. The gateway has already authorized/scoped/metered upstream — pure forward.
-		return forwardToContainer(env.SRT_BRIDGE!, request, srtPoolSize(env));
+		return forwardToContainer(env.SRT_BRIDGE!, request, resolvePoolSize(env.SRT_POOL_SIZE));
 	}
 	return Response.json(notActivatedBody(request.method), {
 		status: 501,
@@ -187,12 +164,7 @@ export const __testing = {
 	srtActivated,
 	notActivatedBody,
 	bindingPresent,
-	srtPoolSize,
-	srtContainerId,
-	isContainerStartFailure,
 	srtUnavailableBody,
 	srtUnavailableResponse,
-	SRT_POOL_SIZE_DEFAULT,
-	SRT_POOL_SIZE_MAX,
 	SRT_UNAVAILABLE_RETRY_AFTER_SECONDS,
 };
