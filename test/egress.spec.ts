@@ -329,14 +329,14 @@ describe("(e) wrangler-inert guard — the seam arms NOTHING", () => {
 		expect(wrangler).toMatch(/\[\[containers\]\]\s*\nclass_name\s*=\s*"MoqContainer"/);
 	});
 
-	it("the SRT_BRIDGE binding stays COMMENTED (inert)", () => {
-		// The SRT block now mirrors the live MoQ schema (class_name SrtContainer + a durable_objects
-		// binding `name = "SRT_BRIDGE"`). An ACTIVE binding would be `name = "SRT_BRIDGE"` at column 0;
-		// the only occurrence must be inside a comment (`# name = "SRT_BRIDGE"`). No uncommented line.
-		expect(wrangler).not.toMatch(/^\s*name\s*=\s*"SRT_BRIDGE"/m);
-		expect(wrangler).toMatch(/#\s*name\s*=\s*"SRT_BRIDGE"/);
-		// The container class for SRT must also stay commented (no uncommented SrtContainer binding).
-		expect(wrangler).not.toMatch(/^\s*class_name\s*=\s*"SrtContainer"/m);
+	it("SRT_BRIDGE is deliberately BOUND (#53) but kept INERT by the flag, not by absence", () => {
+		// #53 ACTIVATED the SRT egress binding (the containers/srt image carries a real ffmpeg
+		// --enable-libsrt sender), so UNLIKE NDI/OMT/FFMPEG the SRT block is UNCOMMENTED. The inert
+		// guarantee for SRT therefore does NOT come from the binding being absent — it comes from
+		// BRIDGE_FORWARD_ENABLED="false" (asserted below) AND srtActivated() requiring that flag. This
+		// test documents the intentional #53 state: the SRT binding + class are present at column 0.
+		expect(wrangler).toMatch(/^\s*name\s*=\s*"SRT_BRIDGE"/m);
+		expect(wrangler).toMatch(/^\s*class_name\s*=\s*"SrtContainer"/m);
 	});
 
 	it("the NDI_BRIDGE binding stays COMMENTED (inert)", () => {
@@ -359,15 +359,16 @@ describe("(e) wrangler-inert guard — the seam arms NOTHING", () => {
 		expect(wrangler).not.toMatch(/^\s*class_name\s*=\s*"FfmpegContainer"/m);
 	});
 
-	it("the ONLY uncommented [[containers]] is the live MoQ block (no protocol egress binding leaked)", () => {
-		// Every uncommented binding line (legacy `binding = "..."` OR durable_objects `name = "..."`)
-		// must be a MoQ/durable-object binding, never SRT/NDI/OMT/FFMPEG. The SRT block now uses the
-		// durable_objects `name = "SRT_BRIDGE"` schema, so catch both forms.
+	it("no UNSHIPPED egress binding (NDI/OMT/FFMPEG) is leaked uncommented — only MoQ (live) + SRT (#53) may be bound", () => {
+		// The only egress strands whose images are unbuilt/unpushed are NDI, OMT, FFMPEG — their bindings
+		// MUST stay commented. MoQ (live) and SRT (#53-activated, flag-gated) are the deliberately-bound
+		// pair. So every uncommented binding line (legacy `binding = "..."` OR durable_objects
+		// `name = "..."`) must NOT be one of the three unshipped protocols.
 		const activeBindings = wrangler
 			.split("\n")
 			.filter((l) => /^\s*(binding|name)\s*=/.test(l) && !/^\s*#/.test(l));
 		for (const line of activeBindings) {
-			expect(line).not.toMatch(/"(SRT|NDI|OMT|FFMPEG)_BRIDGE"/);
+			expect(line).not.toMatch(/"(NDI|OMT|FFMPEG)_BRIDGE"/);
 		}
 	});
 
