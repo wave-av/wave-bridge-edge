@@ -58,10 +58,16 @@ BRIDGE_FORWARD_ENABLED = "false"
 # built at deploy from the Dockerfile, bound as a Durable Object the Worker reaches via getContainer().
 # Requires CF Containers on the deploying account (Jake@gmail acct — wave.online acct is free-tier, no
 # Containers). If the binding is absent, src/moq.ts fail-closes to a typed 501 (no fabricated round-trip).
+# max_instances is the HARD ceiling on live MoqContainer instances. src/moq.ts hashes requests across a
+# warm pool of MOQ_POOL_SIZE stable shards (default 8, env-tunable without a code deploy); max_instances
+# = pool size + RECYCLE HEADROOM so the platform can start a replacement instance while an old one drains.
+# Grow BOTH together to serve more concurrent client round-trips; at saturation the handler returns honest
+# 503 backpressure, never a raw 500. (The original max_instances=3 + random-per-request ids is what wedged
+# the pool with un-draining instances — see src/moq.ts warm-pool notes.)
 [[containers]]
 class_name = "MoqContainer"
 image = "./containers/moq/Dockerfile"
-max_instances = 3
+max_instances = 10
 
 [[durable_objects.bindings]]
 name = "MOQ_BRIDGE"

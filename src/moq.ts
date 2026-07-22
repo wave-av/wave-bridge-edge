@@ -20,6 +20,11 @@ export interface MoqEnv {
   /** CF Container binding for the hosted MoQ strand. Present once the [[containers]] block is
    *  provisioned on a CF-Containers-enabled account; absent → honest typed 501. */
   MOQ_BRIDGE?: DurableObjectNamespace<MoqContainer>;
+  /** Warm-pool size: how many stable container shards requests hash across. Tunable WITHOUT a code
+   *  deploy (a `wrangler secret`/var change) so capacity scales with client load. MUST stay ≤ the
+   *  MoqContainer `max_instances` in wrangler.toml (which is the hard ceiling + recycle headroom).
+   *  Absent/invalid → MOQ_POOL_SIZE_DEFAULT. */
+  MOQ_POOL_SIZE?: string;
 }
 
 const MOQ_SCOPES = { read: 'moq:read', write: 'moq:write' } as const;
@@ -28,21 +33,53 @@ const MOQ_RETRY_AFTER_SECONDS = 3600;
 /** Transient pool-exhaustion / cold-start failure clears in seconds — not the account-gate horizon. */
 const MOQ_UNAVAILABLE_RETRY_AFTER_SECONDS = 5;
 /**
- * Size of the container-instance ring. MUST match `max_instances` for MoqContainer in wrangler.toml.
- * Requests hash onto a FIXED set of `moq-bridge-{0..N-1}` DO names so warm instances are REUSED and
- * the pool cap is never exceeded. A fresh id per call (crypto.randomUUID) instead spins a new cold
- * instance every time and pins all N slots within one `sleepAfter` window — the exact cause of the
- * "Maximum number of running container instances exceeded" 500 this ring fixes.
+ * WARM-POOL SCALING MODEL (the durable answer to "how do we scale with clients?").
+ *
+ * A CF Container instance is addressed by a string id → one Durable-Object-backed instance, capped by
+ * `max_instances` in wrangler.toml. Requests hash across a FIXED set of stable ids `moq-bridge-{0..N-1}`,
+ * so warm instances are REUSED (low latency) and the number alive is BOUNDED by N — never leaked. This
+ * replaces the original `crypto.randomUUID()` id-per-request, which spun a brand-new instance every call
+ * and pinned all slots within one `sleepAfter` window → the "Maximum number of running container
+ * instances exceeded" 500. With stable ids, an instance staying warm is REUSE (good), not a zombie.
+ *
+ * Scale knobs (no code change needed to grow):
+ *   • MOQ_POOL_SIZE (env var)      — warm shards = concurrent round-trips served. Bump as clients grow.
+ *   • max_instances (wrangler.toml) — HARD ceiling. Set to pool size + recycle HEADROOM so the platform
+ *                                     can start a replacement instance while an old one drains (the lack
+ *                                     of headroom is what made the original wedge unrecoverable).
+ * At saturation the handler returns honest 503 BACKPRESSURE (retry-after), never a raw 500 — so a load
+ * spike degrades gracefully instead of erroring. This same pattern is the fleet standard for every
+ * container product (see the fleet-scaling audit task).
  */
-const MOQ_POOL_SIZE = 3;
+const MOQ_POOL_SIZE_DEFAULT = 8;
+/** Hard clamp so a fat-fingered env var can't request an unbounded pool. Keep ≥ any real max_instances. */
+const MOQ_POOL_SIZE_MAX = 100;
 
 function moqActivated(env: MoqEnv): boolean {
   return typeof env.MOQ_BRIDGE?.idFromName === 'function';
 }
 
-/** Stable DO name for one shard of the bounded container ring (never more than MOQ_POOL_SIZE alive). */
-function moqContainerId(): string {
-  return `moq-bridge-${Math.floor(Math.random() * MOQ_POOL_SIZE)}`;
+/** Resolve the warm-pool size from env (tunable without a code deploy), clamped to a sane range. */
+function moqPoolSize(env: MoqEnv): number {
+  const raw = Number(env.MOQ_POOL_SIZE);
+  if (!Number.isInteger(raw) || raw < 1) return MOQ_POOL_SIZE_DEFAULT;
+  return Math.min(raw, MOQ_POOL_SIZE_MAX);
+}
+
+/** Stable DO name for one shard of the warm pool (at most poolSize instances ever alive). */
+function moqContainerId(poolSize: number): string {
+  return `moq-bridge-${Math.floor(Math.random() * poolSize)}`;
+}
+
+/**
+ * CF Containers signals pool exhaustion / cold-start failure by RETURNING a 5xx whose body carries the
+ * runtime marker below — it does NOT throw. The hosted strand (server.mjs) itself only ever returns
+ * 200 (ok) or 502 (failed round-trip), never 500/503, so any 5xx bearing this marker is the platform
+ * layer, not the app — safe to convert to honest backpressure without masking a real app error.
+ */
+function isContainerStartFailure(status: number, body: string): boolean {
+  if (status !== 500 && status !== 503) return false;
+  return /maximum number of running container instances|failed to start container/i.test(body);
 }
 
 /** Honest typed receipt for a transient container failure (pool exhausted / cold-start) — not a raw 500. */
@@ -56,6 +93,17 @@ function unavailableBody() {
     blockers: ['the hosted MoQ container pool is momentarily saturated or cold-starting; retry shortly'],
     docs: 'https://bridge.wave.online/llms.txt',
   };
+}
+
+/** Build the honest 503 backpressure Response (shared by the throw path and the returned-5xx path). */
+function unavailableResponse(): Response {
+  return Response.json(unavailableBody(), {
+    status: 503,
+    headers: {
+      'retry-after': String(MOQ_UNAVAILABLE_RETRY_AFTER_SECONDS),
+      'cache-control': 'no-store',
+    },
+  });
 }
 
 function notActivatedBody(method: string) {
@@ -86,29 +134,41 @@ export async function handleMoqBridge(request: Request, env: MoqEnv): Promise<Re
   const url = new URL(request.url);
   // Bound the round-trip size at the edge too (defence in depth; the container also caps at 1000).
   const n = Math.max(1, Math.min(1000, Number(url.searchParams.get('n') ?? 100)));
-  // Route onto the FIXED container ring so warm instances are reused and the pool cap (max_instances)
-  // is never exceeded. A random-per-call id here leaks a fresh cold instance every request → pool
-  // exhaustion → "Maximum number of running container instances exceeded".
-  const container = getContainer(env.MOQ_BRIDGE!, moqContainerId());
+  // Route onto the warm pool so warm instances are reused and the pool cap (max_instances) is never
+  // exceeded. A random-per-call id here leaks a fresh cold instance every request → pool exhaustion →
+  // "Maximum number of running container instances exceeded". Pool size is env-tunable (scale knob).
+  const container = getContainer(env.MOQ_BRIDGE!, moqContainerId(moqPoolSize(env)));
   let res: Response;
   try {
     res = await container.fetch(new Request(`http://moq/bridge?n=${n}`, { method: 'GET' }));
-  } catch (err) {
-    // Container failed to START (pool momentarily saturated / cold-start error). Return an honest typed
-    // receipt with a short retry-after — never leak the raw runtime exception as a bare 500.
-    return Response.json(unavailableBody(), {
-      status: 503,
-      headers: {
-        'retry-after': String(MOQ_UNAVAILABLE_RETRY_AFTER_SECONDS),
-        'cache-control': 'no-store',
-      },
-    });
+  } catch {
+    // Container failed to START by THROWING (cold-start error). Honest 503 backpressure — never a raw 500.
+    return unavailableResponse();
+  }
+  // CF Containers signals pool exhaustion by RETURNING a 5xx (it does not throw), so inspect the body:
+  // the hosted strand only ever returns 200/502, so a 5xx carrying the runtime marker is the platform
+  // saturating → convert to honest 503 backpressure. Read the body once, then reconstruct the response.
+  const bodyText = await res.text();
+  if (isContainerStartFailure(res.status, bodyText)) {
+    return unavailableResponse();
   }
   // Pass the container's receipt straight through (200 on ok, 502 on a failed round-trip).
-  return new Response(res.body, {
+  return new Response(bodyText, {
     status: res.status,
     headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
   });
 }
 
-export const __testing = { MOQ_SCOPES, MOQ_RETRY_AFTER_SECONDS, moqActivated, notActivatedBody };
+export const __testing = {
+  MOQ_SCOPES,
+  MOQ_RETRY_AFTER_SECONDS,
+  MOQ_UNAVAILABLE_RETRY_AFTER_SECONDS,
+  MOQ_POOL_SIZE_DEFAULT,
+  MOQ_POOL_SIZE_MAX,
+  moqActivated,
+  moqPoolSize,
+  moqContainerId,
+  isContainerStartFailure,
+  notActivatedBody,
+  unavailableBody,
+};
