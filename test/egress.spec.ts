@@ -375,6 +375,16 @@ describe("(e) wrangler-inert guard — the seam arms NOTHING", () => {
 	it("BRIDGE_FORWARD_ENABLED stays \"false\" (the operator-gate is closed)", () => {
 		expect(wrangler).toMatch(/^BRIDGE_FORWARD_ENABLED\s*=\s*"false"/m);
 	});
+
+	it("#27 relay JOIN mint is armed as vars, but the bearer NEVER lands as a plaintext var", () => {
+		// The strand must exchange the durable org bearer at the gateway for a short-lived relay
+		// join-token (the relay flipped to auth default-ON). WAVE_MOQ_JOIN + WAVE_MOQ_GATEWAY are safe
+		// non-secret vars; WAVE_MOQ_TOKEN is a Worker SECRET (wrangler secret put) and must NEVER appear
+		// as a committed [vars] value — this guard fails loudly if anyone inlines the token.
+		expect(wrangler).toMatch(/^WAVE_MOQ_JOIN\s*=\s*"1"/m);
+		expect(wrangler).toMatch(/^WAVE_MOQ_GATEWAY\s*=\s*"https:\/\/api\.wave\.online"/m);
+		expect(wrangler).not.toMatch(/^\s*WAVE_MOQ_TOKEN\s*=/m);
+	});
 });
 
 describe("destUrl — validated, SSRF-guarded egress destination (validate-untrusted-input-before-sink)", () => {

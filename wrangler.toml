@@ -50,6 +50,12 @@ text = "v1.5.0"
 # for that specific protocol.
 [vars]
 BRIDGE_FORWARD_ENABLED = "false"
+# #27: the relay (moq.wave.online) flipped to auth default-ON, so the /bridge MoQ strand must exchange a
+# durable org bearer at the gateway for a short-lived relay join-token. MoqContainer forwards these into
+# the container process env; the strand mints per-connect. WAVE_MOQ_TOKEN is a Worker SECRET (set via
+# `wrangler secret put WAVE_MOQ_TOKEN`), NOT a var — never commit the token value.
+WAVE_MOQ_JOIN = "1"
+WAVE_MOQ_GATEWAY = "https://api.wave.online"
 
 # MoQ container binding — LIVE (WB-6 / E4). The one strand that genuinely runs hosted: CF Containers
 # have no public UDP ingress, but the MoQ strand reaches the relay over an OUTBOUND WebSocket, which

@@ -11,9 +11,21 @@
 import { Container, getContainer } from '@cloudflare/containers';
 
 /** Durable-Object-backed container running containers/moq/server.mjs (the proven MoQ strand). */
-export class MoqContainer extends Container {
+export class MoqContainer extends Container<MoqEnv> {
   defaultPort = 8080;
   sleepAfter = '5m';
+
+  // Forward the relay JOIN-mint config into the container's process env so the spawned strand
+  // (containers/moq/server.mjs → `spawn('node', …)` inherits process.env) can exchange the durable org
+  // bearer for a short-lived relay join-token (#27 — the relay flipped to auth default-ON, so a tokenless
+  // strand 401s and /bridge round-trips fail 502). The field initializer runs right after super(), before
+  // any lazy container start. The bearer is env-only, never logged, and is sent by the strand ONLY to the
+  // https gateway — never to the relay.
+  envVars = {
+    WAVE_MOQ_JOIN: this.env.WAVE_MOQ_JOIN ?? '',
+    WAVE_MOQ_TOKEN: this.env.WAVE_MOQ_TOKEN ?? '',
+    WAVE_MOQ_GATEWAY: this.env.WAVE_MOQ_GATEWAY ?? 'https://api.wave.online',
+  };
 }
 
 export interface MoqEnv {
@@ -25,6 +37,14 @@ export interface MoqEnv {
    *  MoqContainer `max_instances` in wrangler.toml (which is the hard ceiling + recycle headroom).
    *  Absent/invalid → MOQ_POOL_SIZE_DEFAULT. */
   MOQ_POOL_SIZE?: string;
+  /** '1'|'true'|'on' → the strand exchanges WAVE_MOQ_TOKEN at the gateway for a short-lived relay
+   *  join-token (#27). Forwarded into the container process env by MoqContainer. Empty/absent → legacy. */
+  WAVE_MOQ_JOIN?: string;
+  /** Durable org bearer (Worker SECRET, set via `wrangler secret put`) the strand presents to the gateway
+   *  mint endpoint. Env-only, never logged, never sent to the relay. Absent → join mode fail-closes. */
+  WAVE_MOQ_TOKEN?: string;
+  /** Gateway origin that mints the join-token. Defaults to https://api.wave.online. */
+  WAVE_MOQ_GATEWAY?: string;
 }
 
 const MOQ_SCOPES = { read: 'moq:read', write: 'moq:write' } as const;
