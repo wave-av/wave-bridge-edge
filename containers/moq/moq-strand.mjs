@@ -208,6 +208,17 @@ function decodeObject(bytes) {
 
 // moq-strand.ts
 var RELAY = process.env.WAVE_MOQ_RELAY ?? "wss://moq.wave.online";
+// Path base for the publish/subscribe routes. Default '/v1' hits the relay direct (legacy, unchanged).
+var PATH_BASE = process.env.WAVE_MOQ_PATH_PREFIX ?? "/v1";
+// Durable org bearer for the gateway mint (#27/#58). Env-only — NEVER argv/log. Empty → no token.
+var TOKEN = process.env.WAVE_MOQ_TOKEN ?? "";
+// #58 join mode: exchange the durable org bearer at the WAVE gateway for a short-lived signed join-token,
+// then dial the relay DIRECT with ?join=. WAVE_MOQ_JOIN=1|true|on enables it; default off = legacy path.
+var GATEWAY = process.env.WAVE_MOQ_GATEWAY ?? "https://api.wave.online";
+function joinEnabled() {
+  const v = (process.env.WAVE_MOQ_JOIN ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "on";
+}
 var GROUP_SIZE = 30;
 function log(...a) {
   process.stderr.write(`[moq-strand] ${a.join(" ")}
@@ -234,8 +245,35 @@ function makeFramer(onFrame) {
     }
   };
 }
-function connect(path) {
-  const url = `${RELAY}${path}`;
+async function resolveConnectUrl(role, ns, track) {
+  const nsE = encodeURIComponent(ns), trackE = encodeURIComponent(track);
+  if (joinEnabled()) {
+    if (!TOKEN)
+      throw new Error("WAVE_MOQ_JOIN set but WAVE_MOQ_TOKEN missing (cannot authorize the mint)");
+    // The durable org bearer is sent ONLY to the https gateway; the short-lived join token rides the
+    // relay URL query. Fail-closed: a non-2xx exchange throws — no silent anonymous fallback. Nothing
+    // here is ever logged.
+    const method = role === "publish" ? "POST" : "GET";
+    const headers = { authorization: `Bearer ${TOKEN}` };
+    let res;
+    try {
+      res = await fetch(`${GATEWAY}/v1/moq/${role}/${nsE}/${trackE}`, { method, headers });
+    } catch (e) {
+      throw new Error(`join exchange network error: ${e?.message ?? e}`);
+    }
+    if (!res.ok)
+      throw new Error(`join exchange rejected: HTTP ${res.status}`); // never echo body (may carry codes)
+    const body = await res.json().catch(() => null);
+    if (!body || typeof body.relayWsUrl !== "string" || typeof body.joinToken !== "string")
+      throw new Error("join exchange: missing relayWsUrl/joinToken");
+    const sep = body.relayWsUrl.includes("?") ? "&" : "?";
+    return `${body.relayWsUrl}${sep}join=${encodeURIComponent(body.joinToken)}`;
+  }
+  const q = TOKEN ? `?access_token=${encodeURIComponent(TOKEN)}` : "";
+  return `${RELAY}${PATH_BASE}/${role}/${nsE}/${trackE}${q}`;
+}
+async function connect(role, ns, track) {
+  const url = await resolveConnectUrl(role, ns, track);
   const ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
   return new Promise((resolve, reject) => {
@@ -278,7 +316,7 @@ function waitControl(ws, type, timeoutMs = 1e4) {
   });
 }
 async function runPublisher(ns, track) {
-  const ws = await connect(`/v1/publish/${encodeURIComponent(ns)}/${encodeURIComponent(track)}`);
+  const ws = await connect("publish", ns, track);
   log(`connected pub ${RELAY} ns=${ns} track=${track}`);
   send(ws, WS_KIND.CONTROL, encodeSetup({ role: MOQ_ROLE.PUBLISHER, maxSubscriptions: 0n }));
   await waitControl(ws, MOQ_MSG.SETUP);
@@ -306,7 +344,7 @@ async function runPublisher(ns, track) {
   ws.close();
 }
 async function runSubscriber(ns, track) {
-  const ws = await connect(`/v1/subscribe/${encodeURIComponent(ns)}/${encodeURIComponent(track)}`);
+  const ws = await connect("subscribe", ns, track);
   log(`connected sub ${RELAY} ns=${ns} track=${track}`);
   let received = 0;
   ws.addEventListener("message", (ev) => {

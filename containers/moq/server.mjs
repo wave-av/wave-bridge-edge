@@ -81,10 +81,26 @@ async function runRoundtrip(n) {
     const s = sendAt.get(seq);
     got.set(seq, { stamp, e2e_ms: s != null ? performance.now() - s : null });
   }));
-  await waitReady(sub, 'sub');
+  // Capture each strand's stderr so a failure surfaces the strand's own FATAL/log lines in the receipt
+  // instead of an opaque "sub exited early" (actionable-error / fail-loud). The strand never logs the
+  // token or joinToken (the bearer goes only to the gateway; ws errors carry no URL), so this is safe.
+  let subErr = '';
+  sub.stderr.on('data', (d) => { subErr += d; });
+  const tail = (s) => s.trim().split('\n').slice(-6).join(' | ') || '(no stderr)';
+  try {
+    await waitReady(sub, 'sub');
+  } catch (e) {
+    throw new Error(`${e?.message ?? e} :: sub stderr: ${tail(subErr)}`);
+  }
 
   const pub = spawn('node', [STRAND, 'pub', NS, TRACK], { stdio: ['pipe', 'ignore', 'pipe'] });
-  await waitReady(pub, 'pub');
+  let pubErr = '';
+  pub.stderr.on('data', (d) => { pubErr += d; });
+  try {
+    await waitReady(pub, 'pub');
+  } catch (e) {
+    throw new Error(`${e?.message ?? e} :: pub stderr: ${tail(pubErr)}`);
+  }
 
   const sent = new Map();
   for (let i = 0; i < n; i++) {
