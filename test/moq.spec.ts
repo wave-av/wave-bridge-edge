@@ -13,6 +13,7 @@
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/worker";
+import { __testing } from "../src/moq";
 import type { MoqEnv } from "../src/moq";
 
 // Mock the CF Containers helper so the activated-forward path is testable without a real DO runtime.
@@ -82,6 +83,60 @@ describe("MoQ /bridge — forwards to the container when bound (the real hosted 
 		await call(new Request("https://bridge.wave.online/bridge?n=99999"), boundEnv);
 		const forwarded = new URL((containerFetch.mock.calls[0][0] as Request).url);
 		expect(forwarded.searchParams.get("n")).toBe("1000");
+	});
+});
+
+describe("MoQ /bridge — warm-pool sizing (the scale knob)", () => {
+	it("routes onto a bounded, stable pool of moq-bridge-{0..N-1} ids (never a random per-call id)", () => {
+		const { moqContainerId } = __testing;
+		const ids = new Set(Array.from({ length: 200 }, () => moqContainerId(3)));
+		// Every id is one of exactly 3 stable shards — no per-call leak.
+		expect([...ids].sort()).toEqual(["moq-bridge-0", "moq-bridge-1", "moq-bridge-2"]);
+	});
+
+	it("pool size is env-tunable without a code deploy, clamped to a sane range", () => {
+		const { moqPoolSize, MOQ_POOL_SIZE_DEFAULT, MOQ_POOL_SIZE_MAX } = __testing;
+		expect(moqPoolSize({} as MoqEnv)).toBe(MOQ_POOL_SIZE_DEFAULT); // unset → default
+		expect(moqPoolSize({ MOQ_POOL_SIZE: "16" } as MoqEnv)).toBe(16); // honoured
+		expect(moqPoolSize({ MOQ_POOL_SIZE: "0" } as MoqEnv)).toBe(MOQ_POOL_SIZE_DEFAULT); // <1 → default
+		expect(moqPoolSize({ MOQ_POOL_SIZE: "nonsense" } as MoqEnv)).toBe(MOQ_POOL_SIZE_DEFAULT); // NaN → default
+		expect(moqPoolSize({ MOQ_POOL_SIZE: "99999" } as MoqEnv)).toBe(MOQ_POOL_SIZE_MAX); // clamped
+	});
+});
+
+describe("MoQ /bridge — honest 503 backpressure on pool exhaustion (never a raw 500)", () => {
+	it("converts the container's RETURNED exhaustion 500 into a typed 503 with retry-after", async () => {
+		containerFetch.mockImplementationOnce(async () =>
+			new Response(
+				"Failed to start container: Maximum number of running container instances exceeded. Try again later",
+				{ status: 500 },
+			),
+		);
+		const res = await call(new Request("https://bridge.wave.online/bridge?n=1"), boundEnv);
+		expect(res.status).toBe(503);
+		expect(res.headers.get("retry-after")).toBe(String(__testing.MOQ_UNAVAILABLE_RETRY_AFTER_SECONDS));
+		const body = (await res.json()) as Record<string, unknown>;
+		expect(body.error).toBe("MOQ_BRIDGE_UNAVAILABLE");
+		expect(body.status).toBe("unavailable");
+		expect(body.live).toBe(false);
+	});
+
+	it("converts a THROWN cold-start failure into the same honest 503", async () => {
+		containerFetch.mockImplementationOnce(async () => {
+			throw new Error("container failed to start");
+		});
+		const res = await call(new Request("https://bridge.wave.online/bridge?n=1"), boundEnv);
+		expect(res.status).toBe(503);
+		expect(((await res.json()) as Record<string, unknown>).error).toBe("MOQ_BRIDGE_UNAVAILABLE");
+	});
+
+	it("does NOT mask the app's own 502 (failed round-trip) as backpressure", async () => {
+		containerFetch.mockImplementationOnce(async () =>
+			Response.json({ ok: false, service: "wave-moq-bridge", missing: 5 }, { status: 502 }),
+		);
+		const res = await call(new Request("https://bridge.wave.online/bridge?n=5"), boundEnv);
+		expect(res.status).toBe(502); // passed straight through — a real app receipt, not exhaustion
+		expect(((await res.json()) as Record<string, unknown>).ok).toBe(false);
 	});
 });
 
