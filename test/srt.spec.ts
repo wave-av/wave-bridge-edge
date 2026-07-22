@@ -96,34 +96,6 @@ describe("SRT forward shape — fail-closed, never fabricates transport", () => 
 	});
 });
 
-describe("SRT forward — warm-pool sizing (the scale knob, mirrors src/moq.ts)", () => {
-	it("routes onto a bounded, stable pool of srt-bridge-{0..N-1} ids (never a random per-call id)", () => {
-		const { srtContainerId } = __testing;
-		const ids = Array.from({ length: 200 }, () => srtContainerId(8));
-		for (const id of ids) expect(id).toMatch(/^srt-bridge-[0-7]$/);
-	});
-
-	it("pool size is env-tunable without a code deploy, clamped to a sane range", () => {
-		const { srtPoolSize, SRT_POOL_SIZE_DEFAULT, SRT_POOL_SIZE_MAX } = __testing;
-		expect(srtPoolSize({} as BridgeEnv)).toBe(SRT_POOL_SIZE_DEFAULT);
-		expect(srtPoolSize({ SRT_POOL_SIZE: "0" } as BridgeEnv)).toBe(SRT_POOL_SIZE_DEFAULT);
-		expect(srtPoolSize({ SRT_POOL_SIZE: "3" } as BridgeEnv)).toBe(3);
-		expect(srtPoolSize({ SRT_POOL_SIZE: "9999" } as BridgeEnv)).toBe(SRT_POOL_SIZE_MAX);
-		expect(srtPoolSize({ SRT_POOL_SIZE: "abc" } as BridgeEnv)).toBe(SRT_POOL_SIZE_DEFAULT);
-	});
-});
-
-describe("SRT forward — isContainerStartFailure predicate (mirrors src/moq.ts)", () => {
-	it("recognizes the CF Containers pool-exhaustion marker", () => {
-		const { isContainerStartFailure } = __testing;
-		expect(
-			isContainerStartFailure(503, "Failed to start container: Maximum number of running container instances exceeded. Try again later"),
-		).toBe(true);
-		expect(isContainerStartFailure(200, "ok")).toBe(false);
-		expect(isContainerStartFailure(503, "unrelated failure")).toBe(false);
-	});
-});
-
 describe("SRT forward — honest 503 backpressure on pool exhaustion (never a raw 500)", () => {
 	it("converts the container's RETURNED exhaustion 500 into a typed 503 with retry-after", async () => {
 		containerFetch.mockImplementationOnce(async () =>

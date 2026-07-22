@@ -86,24 +86,6 @@ describe("MoQ /bridge — forwards to the container when bound (the real hosted 
 	});
 });
 
-describe("MoQ /bridge — warm-pool sizing (the scale knob)", () => {
-	it("routes onto a bounded, stable pool of moq-bridge-{0..N-1} ids (never a random per-call id)", () => {
-		const { moqContainerId } = __testing;
-		const ids = new Set(Array.from({ length: 200 }, () => moqContainerId(3)));
-		// Every id is one of exactly 3 stable shards — no per-call leak.
-		expect([...ids].sort()).toEqual(["moq-bridge-0", "moq-bridge-1", "moq-bridge-2"]);
-	});
-
-	it("pool size is env-tunable without a code deploy, clamped to a sane range", () => {
-		const { moqPoolSize, MOQ_POOL_SIZE_DEFAULT, MOQ_POOL_SIZE_MAX } = __testing;
-		expect(moqPoolSize({} as MoqEnv)).toBe(MOQ_POOL_SIZE_DEFAULT); // unset → default
-		expect(moqPoolSize({ MOQ_POOL_SIZE: "16" } as MoqEnv)).toBe(16); // honoured
-		expect(moqPoolSize({ MOQ_POOL_SIZE: "0" } as MoqEnv)).toBe(MOQ_POOL_SIZE_DEFAULT); // <1 → default
-		expect(moqPoolSize({ MOQ_POOL_SIZE: "nonsense" } as MoqEnv)).toBe(MOQ_POOL_SIZE_DEFAULT); // NaN → default
-		expect(moqPoolSize({ MOQ_POOL_SIZE: "99999" } as MoqEnv)).toBe(MOQ_POOL_SIZE_MAX); // clamped
-	});
-});
-
 describe("MoQ /bridge — honest 503 backpressure on pool exhaustion (never a raw 500)", () => {
 	it("converts the container's RETURNED exhaustion 500 into a typed 503 with retry-after", async () => {
 		containerFetch.mockImplementationOnce(async () =>

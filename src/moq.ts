@@ -9,6 +9,7 @@
 // absent (e.g. a plan/account without CF Containers), the handler FAIL-CLOSES to a typed 501 — it
 // never fabricates a round-trip. No flag flip can make an absent container answer.
 import { Container, getContainer } from '@cloudflare/containers';
+import { resolvePoolSize, poolContainerId, isContainerStartFailure } from '@wave-av/container-pool';
 
 /** Durable-Object-backed container running containers/moq/server.mjs (the proven MoQ strand). */
 export class MoqContainer extends Container<MoqEnv> {
@@ -35,7 +36,7 @@ export interface MoqEnv {
   /** Warm-pool size: how many stable container shards requests hash across. Tunable WITHOUT a code
    *  deploy (a `wrangler secret`/var change) so capacity scales with client load. MUST stay ≤ the
    *  MoqContainer `max_instances` in wrangler.toml (which is the hard ceiling + recycle headroom).
-   *  Absent/invalid → MOQ_POOL_SIZE_DEFAULT. */
+   *  Absent/invalid → DEFAULT_POOL_SIZE (from @wave-av/container-pool). */
   MOQ_POOL_SIZE?: string;
   /** '1'|'true'|'on' → the strand exchanges WAVE_MOQ_TOKEN at the gateway for a short-lived relay
    *  join-token (#27). Forwarded into the container process env by MoqContainer. Empty/absent → legacy. */
@@ -70,36 +71,13 @@ const MOQ_UNAVAILABLE_RETRY_AFTER_SECONDS = 5;
  * At saturation the handler returns honest 503 BACKPRESSURE (retry-after), never a raw 500 — so a load
  * spike degrades gracefully instead of erroring. This same pattern is the fleet standard for every
  * container product (see the fleet-scaling audit task).
+ *
+ * The pool-size clamp / stable-id / pool-exhaustion helpers live in @wave-av/container-pool (shared
+ * across every spoke) — see the import above. Only the spoke-specific 503 body/retry-after stay local.
  */
-const MOQ_POOL_SIZE_DEFAULT = 8;
-/** Hard clamp so a fat-fingered env var can't request an unbounded pool. Keep ≥ any real max_instances. */
-const MOQ_POOL_SIZE_MAX = 100;
 
 function moqActivated(env: MoqEnv): boolean {
   return typeof env.MOQ_BRIDGE?.idFromName === 'function';
-}
-
-/** Resolve the warm-pool size from env (tunable without a code deploy), clamped to a sane range. */
-function moqPoolSize(env: MoqEnv): number {
-  const raw = Number(env.MOQ_POOL_SIZE);
-  if (!Number.isInteger(raw) || raw < 1) return MOQ_POOL_SIZE_DEFAULT;
-  return Math.min(raw, MOQ_POOL_SIZE_MAX);
-}
-
-/** Stable DO name for one shard of the warm pool (at most poolSize instances ever alive). */
-function moqContainerId(poolSize: number): string {
-  return `moq-bridge-${Math.floor(Math.random() * poolSize)}`;
-}
-
-/**
- * CF Containers signals pool exhaustion / cold-start failure by RETURNING a 5xx whose body carries the
- * runtime marker below — it does NOT throw. The hosted strand (server.mjs) itself only ever returns
- * 200 (ok) or 502 (failed round-trip), never 500/503, so any 5xx bearing this marker is the platform
- * layer, not the app — safe to convert to honest backpressure without masking a real app error.
- */
-function isContainerStartFailure(status: number, body: string): boolean {
-  if (status !== 500 && status !== 503) return false;
-  return /maximum number of running container instances|failed to start container/i.test(body);
 }
 
 /** Honest typed receipt for a transient container failure (pool exhausted / cold-start) — not a raw 500. */
@@ -157,7 +135,7 @@ export async function handleMoqBridge(request: Request, env: MoqEnv): Promise<Re
   // Route onto the warm pool so warm instances are reused and the pool cap (max_instances) is never
   // exceeded. A random-per-call id here leaks a fresh cold instance every request → pool exhaustion →
   // "Maximum number of running container instances exceeded". Pool size is env-tunable (scale knob).
-  const container = getContainer(env.MOQ_BRIDGE!, moqContainerId(moqPoolSize(env)));
+  const container = getContainer(env.MOQ_BRIDGE!, poolContainerId('moq-bridge', resolvePoolSize(env.MOQ_POOL_SIZE)));
   let res: Response;
   try {
     res = await container.fetch(new Request(`http://moq/bridge?n=${n}`, { method: 'GET' }));
@@ -183,12 +161,7 @@ export const __testing = {
   MOQ_SCOPES,
   MOQ_RETRY_AFTER_SECONDS,
   MOQ_UNAVAILABLE_RETRY_AFTER_SECONDS,
-  MOQ_POOL_SIZE_DEFAULT,
-  MOQ_POOL_SIZE_MAX,
   moqActivated,
-  moqPoolSize,
-  moqContainerId,
-  isContainerStartFailure,
   notActivatedBody,
   unavailableBody,
 };
