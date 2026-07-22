@@ -14,6 +14,7 @@
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/worker";
+import { __testing } from "../src/srt";
 import type { BridgeEnv } from "../src/srt";
 
 // Mock the CF Containers helper so the activated-forward path (getContainer(ns,id).fetch()) is testable
@@ -92,6 +93,75 @@ describe("SRT forward shape — fail-closed, never fabricates transport", () => 
 		expect(res.status).toBe(200);
 		expect(await res.text()).toBe("forwarded:POST");
 		expect(containerFetch).toHaveBeenCalledOnce();
+	});
+});
+
+describe("SRT forward — warm-pool sizing (the scale knob, mirrors src/moq.ts)", () => {
+	it("routes onto a bounded, stable pool of srt-bridge-{0..N-1} ids (never a random per-call id)", () => {
+		const { srtContainerId } = __testing;
+		const ids = Array.from({ length: 200 }, () => srtContainerId(8));
+		for (const id of ids) expect(id).toMatch(/^srt-bridge-[0-7]$/);
+	});
+
+	it("pool size is env-tunable without a code deploy, clamped to a sane range", () => {
+		const { srtPoolSize, SRT_POOL_SIZE_DEFAULT, SRT_POOL_SIZE_MAX } = __testing;
+		expect(srtPoolSize({} as BridgeEnv)).toBe(SRT_POOL_SIZE_DEFAULT);
+		expect(srtPoolSize({ SRT_POOL_SIZE: "0" } as BridgeEnv)).toBe(SRT_POOL_SIZE_DEFAULT);
+		expect(srtPoolSize({ SRT_POOL_SIZE: "3" } as BridgeEnv)).toBe(3);
+		expect(srtPoolSize({ SRT_POOL_SIZE: "9999" } as BridgeEnv)).toBe(SRT_POOL_SIZE_MAX);
+		expect(srtPoolSize({ SRT_POOL_SIZE: "abc" } as BridgeEnv)).toBe(SRT_POOL_SIZE_DEFAULT);
+	});
+});
+
+describe("SRT forward — isContainerStartFailure predicate (mirrors src/moq.ts)", () => {
+	it("recognizes the CF Containers pool-exhaustion marker", () => {
+		const { isContainerStartFailure } = __testing;
+		expect(
+			isContainerStartFailure(503, "Failed to start container: Maximum number of running container instances exceeded. Try again later"),
+		).toBe(true);
+		expect(isContainerStartFailure(200, "ok")).toBe(false);
+		expect(isContainerStartFailure(503, "unrelated failure")).toBe(false);
+	});
+});
+
+describe("SRT forward — honest 503 backpressure on pool exhaustion (never a raw 500)", () => {
+	it("converts the container's RETURNED exhaustion 500 into a typed 503 with retry-after", async () => {
+		containerFetch.mockImplementationOnce(async () =>
+			new Response(
+				"Failed to start container: Maximum number of running container instances exceeded. Try again later",
+				{ status: 500 },
+			),
+		);
+		const res = await call(new Request("https://bridge.wave.online/srt"), {
+			BRIDGE_FORWARD_ENABLED: "true",
+			SRT_BRIDGE: boundBinding,
+		});
+		expect(res.status).toBe(503);
+		expect(res.headers.get("retry-after")).toBe(String(__testing.SRT_UNAVAILABLE_RETRY_AFTER_SECONDS));
+		const body = (await res.json()) as Record<string, unknown>;
+		expect(body.error).toBe("SRT_BRIDGE_UNAVAILABLE");
+		expect(body.status).toBe("unavailable");
+		expect(body.live).toBe(false);
+	});
+
+	it("converts a THROWN cold-start failure into the same honest 503", async () => {
+		containerFetch.mockImplementationOnce(async () => {
+			throw new Error("container failed to start");
+		});
+		const res = await call(new Request("https://bridge.wave.online/srt"), {
+			BRIDGE_FORWARD_ENABLED: "true",
+			SRT_BRIDGE: boundBinding,
+		});
+		expect(res.status).toBe(503);
+		expect(((await res.json()) as Record<string, unknown>).error).toBe("SRT_BRIDGE_UNAVAILABLE");
+	});
+
+	it("srtUnavailableResponse() carries status 503, retry-after 5, and the typed error body", async () => {
+		const res = __testing.srtUnavailableResponse();
+		expect(res.status).toBe(503);
+		expect(res.headers.get("retry-after")).toBe("5");
+		const body = (await res.json()) as Record<string, unknown>;
+		expect(body.error).toBe("SRT_BRIDGE_UNAVAILABLE");
 	});
 });
 
