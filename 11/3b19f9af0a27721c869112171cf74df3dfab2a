@@ -1,0 +1,30 @@
+test/egress.spec.ts
+  s_6e7ad4df769349::t_29fad3b0c7d6a0 378-387
+containers/moq/moq-strand.mjs
+  s_6e7ad4df769349::t_4ca494bcf488d7 248-276
+  s_6e7ad4df769349::t_dd4a2e208675cf 319
+  s_6e7ad4df769349::t_7a03aafcec9c1b 347
+  s_6e7ad4df769349::t_6cb4c39c06664c 211-221
+src/moq.ts
+  s_6e7ad4df769349::t_92e19dc9bb79af 40-47
+  s_6e7ad4df769349::t_581f145ed0b90e 14,17
+  s_6e7ad4df769349::t_e4c20bb5479916 18-28
+wrangler.toml
+  s_6e7ad4df769349::t_796ea2317c68e0 53-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "113b19f9af0a27721c869112171cf74df3dfab2a",
+  "prompts": {},
+  "sessions": {
+    "s_6e7ad4df769349": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "91274c95-abfb-4ffd-b243-f2916d2e4e07",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
