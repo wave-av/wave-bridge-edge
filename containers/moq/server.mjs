@@ -155,6 +155,148 @@ async function runRoundtrip(n) {
   };
 }
 
+// --- SOAK MODE (WB-6 Slice 2a / #314) ---------------------------------------------------------
+// De-risk gate BEFORE encode work: prove the relay sustains an hours-long real-time publish, not just
+// a bounded MAX_N=1000 synthetic burst. Fully additive — a new `/soak` route; `/bridge` above and its
+// MAX_N burst path are byte-identical to before this change. Synthetic objects only, same
+// [u32 seq][u64 stamp][fill] framing as the proven burst path; reuses moq-strand.mjs unchanged.
+const SOAK_DEFAULT_SECONDS = 60;
+const SOAK_MAX_SECONDS = 3600; // safety cap so a soak request can't run unbounded
+const SOAK_TRACKS = {
+  a0: { label: 'audio', unitBytes: 200, rate: 50 },   // 200B @ 50/sec
+  v0: { label: 'video', unitBytes: 20 * 1024, rate: 15 }, // 20KB @ 15/sec
+};
+
+/**
+ * Run a sustained pub+sub soak across both synthetic tracks for `seconds`, through the live relay
+ * with the real join flow (WAVE_MOQ_JOIN/WAVE_MOQ_TOKEN unchanged from moq-strand.mjs), and return a
+ * structured JSON receipt: per-track sent/received/loss/e2e-latency, reconnects, and whether the
+ * session survived the full requested duration.
+ *
+ * KNOWN GAP: moq-strand.mjs's `resolveConnectUrl` mints one join-token at connect time and has NO
+ * re-mint/reconnect path — if the relay's join-token TTL is shorter than `seconds`, the socket will
+ * close mid-soak with nothing here to recover it. That is exactly the gap this soak is meant to
+ * expose (see `join_token_remint_supported` / `exited_early` in the receipt), not something this
+ * change silently papers over.
+ */
+async function runSoak(seconds) {
+  const ns = `soak-${process.pid}`;
+  const t0 = performance.now();
+  const stopping = { value: false };
+  const state = {};
+  const pairs = {};
+
+  const tail = (s) => s.trim().split('\n').slice(-6).join(' | ') || '(no stderr)';
+
+  async function startTrack(trackId, spec) {
+    const st = { sent: 0, got: new Map(), sendAt: new Map(), reconnects: 0, exitedEarly: false, label: spec.label };
+    state[trackId] = st;
+
+    const sub = spawn('node', [STRAND, 'sub', ns, trackId], { stdio: ['ignore', 'pipe', 'pipe'] });
+    sub.stdout.on('data', makeFramer((body) => {
+      const seq = body.readUInt32BE(0);
+      const stamp = body.readBigUInt64BE(4);
+      const s = st.sendAt.get(seq);
+      st.got.set(seq, { stamp, e2e_ms: s != null ? performance.now() - s : null });
+    }));
+    let subErr = '';
+    sub.stderr.on('data', (d) => { subErr += d; });
+    sub.on('exit', () => { if (!stopping.value) { st.reconnects++; st.exitedEarly = true; } });
+    try {
+      await waitReady(sub, `sub:${trackId}`);
+    } catch (e) {
+      throw new Error(`${trackId} sub: ${e?.message ?? e} :: sub stderr: ${tail(subErr)}`);
+    }
+
+    const pub = spawn('node', [STRAND, 'pub', ns, trackId], { stdio: ['pipe', 'ignore', 'pipe'] });
+    let pubErr = '';
+    pub.stderr.on('data', (d) => { pubErr += d; });
+    pub.on('exit', () => { if (!stopping.value) { st.reconnects++; st.exitedEarly = true; } });
+    try {
+      await waitReady(pub, `pub:${trackId}`);
+    } catch (e) {
+      throw new Error(`${trackId} pub: ${e?.message ?? e} :: pub stderr: ${tail(pubErr)}`);
+    }
+
+    pairs[trackId] = { sub, pub };
+
+    const intervalMs = 1000 / spec.rate;
+    const fill = Buffer.alloc(spec.unitBytes - 12, trackId.charCodeAt(0) & 0xff);
+    st.timer = setInterval(() => {
+      if (stopping.value || pub.stdin.destroyed) return;
+      const seq = st.sent++;
+      const stamp = BigInt(Date.now());
+      st.sendAt.set(seq, performance.now());
+      try {
+        pub.stdin.write(encodeUnit(seq, stamp, fill));
+      } catch {
+        // pipe closing mid-write is expected right at teardown; loss surfaces in the receipt.
+      }
+    }, intervalMs);
+  }
+
+  for (const [id, spec] of Object.entries(SOAK_TRACKS)) {
+    await startTrack(id, spec);
+  }
+
+  await new Promise((r) => setTimeout(r, seconds * 1000));
+  stopping.value = true;
+  for (const st of Object.values(state)) clearInterval(st.timer);
+  // drain grace period so the last in-flight objects land before teardown
+  await new Promise((r) => setTimeout(r, 1500));
+  for (const { pub } of Object.values(pairs)) {
+    try { pub.stdin.end(); } catch { /* already gone */ }
+  }
+  await new Promise((r) => setTimeout(r, 500));
+  for (const { sub, pub } of Object.values(pairs)) {
+    sub.kill();
+    pub.kill();
+  }
+
+  const wall_s = Number(((performance.now() - t0) / 1000).toFixed(2));
+  const tracks = {};
+  let reconnectsTotal = 0;
+  let survived = true;
+  for (const [id, spec] of Object.entries(SOAK_TRACKS)) {
+    const st = state[id];
+    const e2es = [];
+    let received = 0;
+    for (const [, v] of st.got) {
+      received++;
+      if (v.e2e_ms != null) e2es.push(v.e2e_ms);
+    }
+    e2es.sort((a, b) => a - b);
+    const pct = (p) => (e2es.length ? Number(e2es[Math.min(e2es.length - 1, Math.floor(e2es.length * p))].toFixed(2)) : null);
+    tracks[id] = {
+      label: spec.label,
+      sent: st.sent,
+      received,
+      loss_pct: st.sent ? Number((100 * (1 - received / st.sent)).toFixed(3)) : null,
+      e2e_p50_ms: pct(0.5),
+      e2e_p99_ms: pct(0.99),
+      reconnects: st.reconnects,
+      exited_early: st.exitedEarly,
+    };
+    reconnectsTotal += st.reconnects;
+    if (st.exitedEarly) survived = false;
+  }
+
+  return {
+    ok: Object.values(tracks).every((t) => t.sent > 0 && !t.exited_early),
+    service: 'wave-moq-bridge-soak',
+    relay: RELAY,
+    namespace: ns,
+    duration_requested_s: seconds,
+    duration_actual_s: wall_s,
+    tracks,
+    reconnects_total: reconnectsTotal,
+    survived_full_duration: survived,
+    join_token_remint_supported: false,
+    note: 'moq-strand.mjs mints one join-token at connect and has NO re-mint/reconnect path; if the ' +
+      'relay join-token TTL < duration_requested_s, expect exited_early=true / reconnects>0 above.',
+  };
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://container');
   if (url.pathname === '/health') {
@@ -171,6 +313,21 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       res.writeHead(502, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: false, service: 'wave-moq-bridge', relay: RELAY, error: String(err?.message ?? err) }));
+    }
+    return;
+  }
+  if (url.pathname === '/soak') {
+    const seconds = Math.max(
+      1,
+      Math.min(SOAK_MAX_SECONDS, Number(url.searchParams.get('seconds') ?? process.env.SOAK_SECONDS ?? SOAK_DEFAULT_SECONDS))
+    );
+    try {
+      const receipt = await runSoak(seconds);
+      res.writeHead(receipt.ok ? 200 : 502, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(receipt));
+    } catch (err) {
+      res.writeHead(502, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, service: 'wave-moq-bridge-soak', relay: RELAY, error: String(err?.message ?? err) }));
     }
     return;
   }
