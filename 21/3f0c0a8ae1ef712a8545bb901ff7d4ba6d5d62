@@ -1,0 +1,20 @@
+containers/moq/server.mjs
+  s_db94f917bdf4ff::t_c90df56073e72a 319-333
+  s_db94f917bdf4ff::t_d810c916fe6ed5 158-299
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "213f0c0a8ae1ef712a8545bb901ff7d4ba6d5d62",
+  "prompts": {},
+  "sessions": {
+    "s_db94f917bdf4ff": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "79dc6e12-ee6f-4616-bc24-bbd40d39f3a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
