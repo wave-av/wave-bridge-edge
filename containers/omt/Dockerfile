@@ -35,7 +35,7 @@ RUN git clone --depth=1 --branch=${LIBOMTNET_REF} https://github.com/openmediatr
     && cd /build/libomtnet && dotnet publish -c Release -o /usr/local/lib/libomtnet/
 
 # --- Stage 2: build Go control-plane adapter
-FROM golang:1.23-bookworm AS go-builder
+FROM golang:1.26-bookworm AS go-builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential pkg-config ca-certificates \
     && rm -rf /var/lib/apt/lists/*
