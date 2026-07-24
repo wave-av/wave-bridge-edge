@@ -1,0 +1,19 @@
+containers/moq/moq-strand.mjs
+  s_db94f917bdf4ff::t_63d691db3464c9 218,252-253,261,263,265,272,314-324,326-328,330,333-335,345-400,402,404-406,409-410,412-444,447-450,452-487,489,491-505,507-511
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "656384f6c664f9d78cac380785bdfda06ec162e6",
+  "prompts": {},
+  "sessions": {
+    "s_db94f917bdf4ff": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "79dc6e12-ee6f-4616-bc24-bbd40d39f3a8",
+        "model": "unknown"
+      },
+      "human_author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
