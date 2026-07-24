@@ -18,7 +18,7 @@
 #
 # Until then this image health-passes but emits NotImplemented on protocol paths.
 
-FROM golang:1.23-bookworm AS builder
+FROM golang:1.26-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential pkg-config ca-certificates \
     && rm -rf /var/lib/apt/lists/*

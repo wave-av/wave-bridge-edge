@@ -1,7 +1,7 @@
 # SRT bridge — libsrt + Go adapter that bridges SRT UDP ↔ MoQ tracks.
 # Pinned base image; multi-stage to keep final image small.
 
-FROM golang:1.23-bookworm AS builder
+FROM golang:1.26-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake libssl-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
