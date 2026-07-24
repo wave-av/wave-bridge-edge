@@ -208,17 +208,14 @@ function decodeObject(bytes) {
 
 // moq-strand.ts
 var RELAY = process.env.WAVE_MOQ_RELAY ?? "wss://moq.wave.online";
-// Path base for the publish/subscribe routes. Default '/v1' hits the relay direct (legacy, unchanged).
 var PATH_BASE = process.env.WAVE_MOQ_PATH_PREFIX ?? "/v1";
-// Durable org bearer for the gateway mint (#27/#58). Env-only — NEVER argv/log. Empty → no token.
 var TOKEN = process.env.WAVE_MOQ_TOKEN ?? "";
-// #58 join mode: exchange the durable org bearer at the WAVE gateway for a short-lived signed join-token,
-// then dial the relay DIRECT with ?join=. WAVE_MOQ_JOIN=1|true|on enables it; default off = legacy path.
 var GATEWAY = process.env.WAVE_MOQ_GATEWAY ?? "https://api.wave.online";
 function joinEnabled() {
   const v = (process.env.WAVE_MOQ_JOIN ?? "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "on";
 }
+var DECLARED_PROTOCOL = (process.env.WAVE_MOQ_PROTOCOL ?? "").trim().toLowerCase();
 var GROUP_SIZE = 30;
 function log(...a) {
   process.stderr.write(`[moq-strand] ${a.join(" ")}
@@ -250,11 +247,10 @@ async function resolveConnectUrl(role, ns, track) {
   if (joinEnabled()) {
     if (!TOKEN)
       throw new Error("WAVE_MOQ_JOIN set but WAVE_MOQ_TOKEN missing (cannot authorize the mint)");
-    // The durable org bearer is sent ONLY to the https gateway; the short-lived join token rides the
-    // relay URL query. Fail-closed: a non-2xx exchange throws — no silent anonymous fallback. Nothing
-    // here is ever logged.
     const method = role === "publish" ? "POST" : "GET";
     const headers = { authorization: `Bearer ${TOKEN}` };
+    if (role === "publish" && DECLARED_PROTOCOL)
+      headers["x-wave-declare-protocol"] = DECLARED_PROTOCOL;
     let res;
     try {
       res = await fetch(`${GATEWAY}/v1/moq/${role}/${nsE}/${trackE}`, { method, headers });
@@ -262,18 +258,18 @@ async function resolveConnectUrl(role, ns, track) {
       throw new Error(`join exchange network error: ${e?.message ?? e}`);
     }
     if (!res.ok)
-      throw new Error(`join exchange rejected: HTTP ${res.status}`); // never echo body (may carry codes)
+      throw new Error(`join exchange rejected: HTTP ${res.status}`);
     const body = await res.json().catch(() => null);
-    if (!body || typeof body.relayWsUrl !== "string" || typeof body.joinToken !== "string")
+    if (!body || typeof body.relayWsUrl !== "string" || typeof body.joinToken !== "string") {
       throw new Error("join exchange: missing relayWsUrl/joinToken");
+    }
     const sep = body.relayWsUrl.includes("?") ? "&" : "?";
     return `${body.relayWsUrl}${sep}join=${encodeURIComponent(body.joinToken)}`;
   }
   const q = TOKEN ? `?access_token=${encodeURIComponent(TOKEN)}` : "";
   return `${RELAY}${PATH_BASE}/${role}/${nsE}/${trackE}${q}`;
 }
-async function connect(role, ns, track) {
-  const url = await resolveConnectUrl(role, ns, track);
+function connectUrl(url) {
   const ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
   return new Promise((resolve, reject) => {
@@ -315,19 +311,28 @@ function waitControl(ws, type, timeoutMs = 1e4) {
     ws.addEventListener("message", onMsg);
   });
 }
+function onPublisherWsClosed({ shuttingDown }) {
+  return shuttingDown ? "ignore" : "exit";
+}
+function nextBackoffMs(attempt, jitter = Math.random) {
+  const BASE_MS = 250, FACTOR = 2, CAP_MS = 5000;
+  const raw = Math.min(BASE_MS * Math.pow(FACTOR, Math.max(0, attempt)), CAP_MS);
+  return Math.min(raw + jitter() * raw * 0.25, CAP_MS);
+}
+function shouldReconnect({ shuttingDown, stdinEnded }) {
+  return !shuttingDown && !stdinEnded;
+}
 async function runPublisher(ns, track) {
-  const ws = await connect("publish", ns, track);
-  log(`connected pub ${RELAY} ns=${ns} track=${track}`);
-  send(ws, WS_KIND.CONTROL, encodeSetup({ role: MOQ_ROLE.PUBLISHER, maxSubscriptions: 0n }));
-  await waitControl(ws, MOQ_MSG.SETUP);
-  send(ws, WS_KIND.CONTROL, encodePublishNamespace({ requestId: 1n, trackNamespace: [ns] }));
-  await waitControl(ws, MOQ_MSG.REQUEST_OK);
-  log("publisher attached");
-  process.stderr.write(`MOQ_STRAND_READY
-`);
+  let shuttingDown = false;
+  let stdinEnded = false;
+  let reconnects = 0;
   let count = 0;
+  let ws = await connectViaResolve("publish", ns, track);
   const feed = makeFramer((body) => {
     const id = count;
+    count++;
+    if (!ws)
+      return;
     send(ws, WS_KIND.OBJECT, encodeObject({
       trackAlias: 0n,
       groupId: BigInt(Math.floor(id / GROUP_SIZE)),
@@ -335,65 +340,172 @@ async function runPublisher(ns, track) {
       status: MOQ_OBJECT_STATUS.NORMAL,
       payload: new Uint8Array(body)
     }));
-    count++;
   });
   process.stdin.on("data", feed);
-  await new Promise((resolve) => process.stdin.on("end", resolve));
-  log(`stdin closed after ${count} objects; draining`);
-  await new Promise((r) => setTimeout(r, 250));
-  ws.close();
-}
-async function runSubscriber(ns, track) {
-  const ws = await connect("subscribe", ns, track);
-  log(`connected sub ${RELAY} ns=${ns} track=${track}`);
-  let received = 0;
-  ws.addEventListener("message", (ev) => {
-    const bytes = new Uint8Array(ev.data);
-    let f;
-    try {
-      f = untagFrame(bytes);
-    } catch {
-      return;
-    }
-    if (f.kind !== WS_KIND.OBJECT)
-      return;
-    let o;
-    try {
-      o = decodeObject(f.body);
-    } catch {
-      return;
-    }
-    if (o.status !== MOQ_OBJECT_STATUS.NORMAL || o.payload.length === 0)
-      return;
-    process.stdout.write(frameBody(o.payload));
-    received++;
+  process.stdin.on("end", () => {
+    stdinEnded = true;
   });
-  send(ws, WS_KIND.CONTROL, encodeSetup({ role: MOQ_ROLE.SUBSCRIBER, maxSubscriptions: 0n }));
-  await waitControl(ws, MOQ_MSG.SETUP);
-  send(ws, WS_KIND.CONTROL, encodeSubscribe({ requestId: 1n, trackNamespace: [ns], trackName: track }));
-  await waitControl(ws, MOQ_MSG.SUBSCRIBE_OK);
-  log("subscribed");
+  async function connectViaResolve(role, ns2, track2) {
+    const url = await resolveConnectUrl(role, ns2, track2);
+    const sock = await connectUrl(url);
+    log(`connected pub ns=${ns2} track=${track2} mode=${joinEnabled() ? "join" : "legacy"}`);
+    send(sock, WS_KIND.CONTROL, encodeSetup({ role: MOQ_ROLE.PUBLISHER, maxSubscriptions: 0n }));
+    await waitControl(sock, MOQ_MSG.SETUP);
+    send(sock, WS_KIND.CONTROL, encodePublishNamespace({ requestId: 1n, trackNamespace: [ns2] }));
+    await waitControl(sock, MOQ_MSG.REQUEST_OK);
+    log("publisher attached");
+    return sock;
+  }
+  async function reconnectLoop() {
+    let attempt = 0;
+    while (shouldReconnect({ shuttingDown, stdinEnded })) {
+      const delay = nextBackoffMs(attempt);
+      attempt++;
+      reconnects++;
+      log(`MOQ_STRAND_RECONNECT attempt=${attempt}`);
+      await new Promise((r) => setTimeout(r, delay));
+      if (!shouldReconnect({ shuttingDown, stdinEnded }))
+        return;
+      try {
+        ws = null;
+        const sock = await connectViaResolve("publish", ns, track);
+        ws = sock;
+        process.stderr.write(`MOQ_STRAND_READY
+`);
+        attachSocketHandlers(sock);
+        return;
+      } catch (e) {
+        log(`reconnect attempt=${attempt} failed: ${e?.message ?? e}`);
+      }
+    }
+  }
+  function attachSocketHandlers(sock) {
+    sock.addEventListener("close", () => {
+      if (sock !== ws)
+        return;
+      if (onPublisherWsClosed({ shuttingDown }) === "exit") {
+        log("publisher ws closed unexpectedly — reconnecting");
+        ws = null;
+        reconnectLoop();
+      }
+    });
+    sock.addEventListener("error", (e) => {
+      if (sock !== ws)
+        return;
+      log(`publisher ws error: ${e?.message ?? e} — reconnecting`);
+    });
+  }
   process.stderr.write(`MOQ_STRAND_READY
 `);
-  await new Promise((resolve) => {
-    ws.addEventListener("close", () => {
-      log(`socket closed; received=${received}`);
-      resolve();
+  attachSocketHandlers(ws);
+  await new Promise((resolve) => process.stdin.on("end", resolve));
+  log(`stdin closed after ${count} objects; draining (reconnects=${reconnects})`);
+  await new Promise((r) => setTimeout(r, 250));
+  shuttingDown = true;
+  if (ws)
+    ws.close();
+}
+async function runSubscriber(ns, track) {
+  let shuttingDown = false;
+  let reconnects = 0;
+  let received = 0;
+  async function connectAndSubscribe() {
+    const url = await resolveConnectUrl("subscribe", ns, track);
+    const sock = await connectUrl(url);
+    log(`connected sub ns=${ns} track=${track} mode=${joinEnabled() ? "join" : "legacy"}`);
+    sock.addEventListener("message", (ev) => {
+      const bytes = new Uint8Array(ev.data);
+      let f;
+      try {
+        f = untagFrame(bytes);
+      } catch {
+        return;
+      }
+      if (f.kind !== WS_KIND.OBJECT)
+        return;
+      let o;
+      try {
+        o = decodeObject(f.body);
+      } catch {
+        return;
+      }
+      if (o.status !== MOQ_OBJECT_STATUS.NORMAL || o.payload.length === 0)
+        return;
+      process.stdout.write(frameBody(o.payload));
+      received++;
     });
-    process.stdout.on("error", () => resolve());
+    send(sock, WS_KIND.CONTROL, encodeSetup({ role: MOQ_ROLE.SUBSCRIBER, maxSubscriptions: 0n }));
+    await waitControl(sock, MOQ_MSG.SETUP);
+    send(sock, WS_KIND.CONTROL, encodeSubscribe({ requestId: 1n, trackNamespace: [ns], trackName: track }));
+    await waitControl(sock, MOQ_MSG.SUBSCRIBE_OK);
+    log("subscribed");
+    return sock;
+  }
+  let ws = await connectAndSubscribe();
+  process.stderr.write(`MOQ_STRAND_READY
+`);
+  await new Promise((resolveOuter) => {
+    process.stdout.on("error", () => {
+      shuttingDown = true;
+      resolveOuter();
+    });
+    function attachCloseHandler(sock) {
+      sock.addEventListener("close", () => {
+        if (sock !== ws)
+          return;
+        log(`socket closed; received=${received}`);
+        if (shuttingDown) {
+          resolveOuter();
+          return;
+        }
+        reconnectLoop();
+      });
+    }
+    async function reconnectLoop() {
+      let attempt = 0;
+      while (shouldReconnect({ shuttingDown, stdinEnded: false })) {
+        const delay = nextBackoffMs(attempt);
+        attempt++;
+        reconnects++;
+        log(`MOQ_STRAND_RECONNECT attempt=${attempt}`);
+        await new Promise((r) => setTimeout(r, delay));
+        if (!shouldReconnect({ shuttingDown, stdinEnded: false }))
+          break;
+        try {
+          const sock = await connectAndSubscribe();
+          ws = sock;
+          process.stderr.write(`MOQ_STRAND_READY
+`);
+          attachCloseHandler(sock);
+          return;
+        } catch (e) {
+          log(`reconnect attempt=${attempt} failed: ${e?.message ?? e}`);
+        }
+      }
+      resolveOuter();
+    }
+    attachCloseHandler(ws);
+  });
+  log(`subscriber done; received=${received} reconnects=${reconnects}`);
+}
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const [mode, ns, track] = process.argv.slice(2);
+  if (!mode || !ns || !track) {
+    log("usage: moq-strand.ts <pub|sub> <namespace> <track>");
+    process.exit(2);
+  }
+  const run = mode === "pub" ? runPublisher : mode === "sub" ? runSubscriber : null;
+  if (!run) {
+    log(`unknown mode: ${mode}`);
+    process.exit(2);
+  }
+  run(ns, track).catch((e) => {
+    log(`FATAL ${e?.stack ?? e}`);
+    process.exit(1);
   });
 }
-var [mode, ns, track] = process.argv.slice(2);
-if (!mode || !ns || !track) {
-  log("usage: moq-strand.ts <pub|sub> <namespace> <track>");
-  process.exit(2);
-}
-var run = mode === "pub" ? runPublisher : mode === "sub" ? runSubscriber : null;
-if (!run) {
-  log(`unknown mode: ${mode}`);
-  process.exit(2);
-}
-run(ns, track).catch((e) => {
-  log(`FATAL ${e?.stack ?? e}`);
-  process.exit(1);
-});
+export {
+  shouldReconnect,
+  onPublisherWsClosed,
+  nextBackoffMs
+};
