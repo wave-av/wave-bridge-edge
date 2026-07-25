@@ -10,11 +10,19 @@ A Cloudflare Worker routes gateway traffic to Cloudflare Containers running nati
 
 | Protocol | Container | License | Status |
 |---|---|---|---|
-| SRT | libsrt (BSD) | open | spike planned (Wave 1) |
+| SRT | libsrt (MPL-2.0) | open (weak copyleft) | spike planned (Wave 1) |
 | NDI | NDI Library | Newtek redistribution check pending | scaffolded, license-blocked |
 | Dante | DAL | Audinate partner license required | research |
 | OMT | open reference impl | open | spike planned (Wave 2) |
 | ffmpeg | open | open | transcode utility (all protocols) |
+
+> **libsrt is MPL-2.0, not BSD.** Mozilla Public License 2.0 is *weak copyleft at file
+> granularity*: modifications to libsrt's own source files must be released under MPL-2.0, and
+> that obligation travels with the binary. Any third-party binary that links libsrt — including
+> a downstream consumer linking a WAVE-published artifact — inherits the MPL-2.0 notice and
+> source-availability obligations for those files. It does not copyleft our own separate files,
+> but it is not the no-obligation "BSD" this table previously implied. Treat any distribution
+> path that links libsrt as requiring a licence review.
 
 ## Architecture
 
