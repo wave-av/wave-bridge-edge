@@ -45,6 +45,7 @@ RUN ./configure \
         --prefix=/usr/local \
         --enable-gpl --enable-version3 \
         --enable-libsrt --enable-libx264 \
+        --enable-openssl \
         --enable-protocol=srt,file,https,tcp,tls \
         --disable-doc --disable-debug \
         --extra-cflags="-I/usr/local/include" \

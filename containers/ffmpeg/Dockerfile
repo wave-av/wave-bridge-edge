@@ -16,13 +16,16 @@
 #   • Whisper — speech-to-text filter (added in ffmpeg 8.0)
 #   • Vulkan video — AV1 encode (added in ffmpeg 8.0+)
 
-FROM debian:bookworm-slim AS builder
+# trixie, not bookworm: ffmpeg 9 requires Vulkan headers >= 1.3.277 (bookworm ships
+# 1.3.239) and build-time SPIR-V compilation (runtime GLSL compiler removed in 9.0).
+FROM debian:trixie-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake meson nasm pkg-config \
     git ca-certificates curl \
-    libaom-dev libdav1d-dev libsvtav1-dev libsvtav1enc-dev librav1e-dev \
+    libaom-dev libdav1d-dev libsvtav1enc-dev librav1e-dev \
     libx264-dev libx265-dev libvpx-dev libopus-dev libvorbis-dev \
     libwebp-dev libopenjp2-7-dev \
+    libvulkan-dev glslang-dev glslang-tools libshaderc-dev spirv-tools \
     libssl-dev zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -45,21 +48,23 @@ RUN git clone --depth=1 --branch=${FFMPEG_VERSION} https://git.ffmpeg.org/ffmpeg
         --enable-libopus --enable-libvorbis \
         --enable-libwebp --enable-libopenjpeg \
         --enable-vulkan \
+        --enable-openssl \
         --extra-cflags="-I/usr/local/include" \
         --extra-ldflags="-L/usr/local/lib" \
     && make -j$(nproc) && make install
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    libaom3 libdav1d6 libsvtav1enc1 librav1e0 \
-    libx264-164 libx265-199 libvpx7 libopus0 libvorbis0a libvorbisenc2 \
-    libwebp7 libopenjp2-7 \
-    libssl3 \
+    libaom3 libdav1d7 libsvtav1enc2 librav1e0.7 \
+    libx264-164 libx265-215 libvpx9 libopus0 libvorbis0a libvorbisenc2 \
+    libwebp7 libwebpmux3 libwebpdemux2 libopenjp2-7 \
+    libvulkan1 \
+    libssl3t64 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/local/lib/ /usr/local/lib/
 COPY --from=builder /usr/local/bin/ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
-COPY --from=builder /usr/local/bin/aomenc /usr/local/bin/aomdec /usr/local/bin/
+COPY --from=builder /usr/local/bin/avmenc /usr/local/bin/avmdec /usr/local/bin/
 RUN ldconfig
 EXPOSE 8080/tcp
 ENTRYPOINT ["/usr/local/bin/ffmpeg"]
