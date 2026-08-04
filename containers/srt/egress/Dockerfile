@@ -34,10 +34,10 @@ RUN cmake -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release \
         -DENABLE_APPS=OFF -DENABLE_SHARED=ON -DENABLE_STATIC=OFF . \
     && make -j"$(nproc)" && make install && ldconfig
 
-# ffmpeg n8.1.1 "Hoare" — scoped to what SRT egress needs: MPEG-TS mux + libsrt protocol + H.264/AAC
+# ffmpeg n9.0 "Lei" — scoped to what SRT egress needs: MPEG-TS mux + libsrt protocol + H.264/AAC
 # (libx264 encode + native aac) for the transcode fallback when `-c copy` can't passthrough. NOT the full
 # AV1/AV2 transcode lineup (that is containers/ffmpeg's job); this image stays lean + fast to build.
-ARG FFMPEG_VERSION=n8.1.1
+ARG FFMPEG_VERSION=n9.0
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
 RUN git clone --depth=1 --branch=${FFMPEG_VERSION} https://git.ffmpeg.org/ffmpeg.git /build/ffmpeg
 WORKDIR /build/ffmpeg
