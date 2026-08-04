@@ -1,0 +1,26 @@
+containers/ffmpeg/Dockerfile
+  s_124891ed63801b::t_d279ef7429884b 19-21,28
+  s_124891ed63801b::t_e1baff169f52a6 61
+  s_124891ed63801b::t_c5399cf70b2b05 25
+  s_124891ed63801b::t_34e1de95c71ec0 56,59-60,62-63
+  s_124891ed63801b::t_757877b74da163 51
+  s_124891ed63801b::t_50b6fd391014e4 67
+containers/srt/egress/Dockerfile
+  s_124891ed63801b::t_f5852d4ff640dd 48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.20",
+  "base_commit_sha": "a91d4dc860a6803a49f3dafdf388d410ca44a0c2",
+  "prompts": {},
+  "sessions": {
+    "s_124891ed63801b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "657e721e-b9b4-4e0f-b7bb-049f27115a75",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
