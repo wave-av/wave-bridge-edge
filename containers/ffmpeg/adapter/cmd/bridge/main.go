@@ -81,7 +81,11 @@ func probeCapabilities() capabilities {
 	if v, err := exec.Command("ffmpeg", "-version").Output(); err == nil {
 		caps.FFmpeg = firstLine(v)
 	}
-	if _, err := os.Stat("/usr/local/bin/aomenc"); err == nil {
+	// Probe the canonical AVM name, with the historical AOM name as a
+	// compatibility fallback for older images.
+	if _, err := os.Stat("/usr/local/bin/avmenc"); err == nil {
+		caps.AVM = true
+	} else if _, err := os.Stat("/usr/local/bin/aomenc"); err == nil {
 		caps.AVM = true
 	}
 	return caps

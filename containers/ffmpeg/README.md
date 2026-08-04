@@ -1,12 +1,12 @@
 # ffmpeg bridge container
 
-ffmpeg 8.1.1 "Hoare" (2026-05-04) + AOMedia AVM 1.0.0 (AV2 reference, final spec 2026-05-29).
+ffmpeg 9.0 "Lei" + AOMedia AVM (AV2 reference).
 
 ## Codec lineup
 
 | Codec | Decoder | Encoder | Notes |
 |---|---|---|---|
-| **AV2** | AVM 1.0.0 (AOMedia) | AVM 1.0.0 | NEW — final spec 2026-05-29. ~40% bandwidth reduction vs AV1. Not in ffmpeg upstream until ~8.2; we shell out to AVM CLI tools (`aomenc`, `aomdec`) until libavm bridge lands |
+| **AV2** | AVM (AOMedia) | AVM | Not in ffmpeg 9.0; we shell out to AVM CLI tools (`avmenc`, `avmdec`) until the libavm bridge lands. Compatibility aliases (`aomenc`, `aomdec`) are also provided. |
 | **AV1** | dav1d | libaom-av1, SVT-AV1, rav1e, NVenc, QSV, Vulkan | Vulkan AV1 encode added in ffmpeg 8.0 |
 | **VVC/H.266** | native + VA-API | — | VA-API decode added in ffmpeg 8.0 |
 | **HEVC/H.265** | native + hardware | libx265, hardware | |
@@ -25,7 +25,7 @@ AOMedia AV2 final spec dropped 2026-05-29. Google + VideoLAN demoed real-time de
 WAVE supports AV2 from day one as an early-adopter signal. Real-world workflow today:
 
 ```
-input → ffmpeg (decode source) → temp YUV → aomenc (AV2 encode) → output
+input → ffmpeg (decode source) → temp YUV → avmenc (AV2 encode) → output
 ```
 
 The AV2 path is slower than other codecs (reference encoder, no hardware acceleration yet) but produces files at AV2 bitrates. When ffmpeg 8.2 (or whatever upstream version) lands libavm support, this shells out to `ffmpeg -c:v libavm ...` natively.
@@ -34,7 +34,8 @@ The AV2 path is slower than other codecs (reference encoder, no hardware acceler
 
 - `ffmpeg` — primary transcode + filter pipeline
 - `ffprobe` — stream inspection (used by bridge control plane for content-type negotiation)
-- `aomenc` / `aomdec` — AV2 reference codec until ffmpeg bridges libavm
+- `avmenc` / `avmdec` — AV2 reference codec until ffmpeg bridges libavm
+- `aomenc` / `aomdec` — compatibility aliases for the AVM CLI tools
 
 ## Why no x265/H.265 hardware-only
 

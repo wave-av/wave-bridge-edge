@@ -65,6 +65,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /usr/local/lib/ /usr/local/lib/
 COPY --from=builder /usr/local/bin/ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=builder /usr/local/bin/avmenc /usr/local/bin/avmdec /usr/local/bin/
-RUN ldconfig
+# Keep the historical AOM CLI names available for existing integrations.
+RUN ln -s /usr/local/bin/avmenc /usr/local/bin/aomenc \
+    && ln -s /usr/local/bin/avmdec /usr/local/bin/aomdec \
+    && ldconfig
 EXPOSE 8080/tcp
 ENTRYPOINT ["/usr/local/bin/ffmpeg"]
