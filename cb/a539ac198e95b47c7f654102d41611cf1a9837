@@ -1,0 +1,19 @@
+containers/ffmpeg/Dockerfile.onnx
+  s_124891ed63801b::t_9f73fcc7e17eb0 1-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.20",
+  "base_commit_sha": "cba539ac198e95b47c7f654102d41611cf1a9837",
+  "prompts": {},
+  "sessions": {
+    "s_124891ed63801b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "657e721e-b9b4-4e0f-b7bb-049f27115a75",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
