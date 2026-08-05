@@ -16,8 +16,10 @@ name: ffmpeg-bench
 on:
   pull_request:
     paths:
+      # Only containers/ffmpeg/**: that is the only image this workflow builds and benchmarks.
+      # containers/srt/egress/** builds its own independent ffmpeg (n8.1.1 + libsrt) and is NOT
+      # covered by the media-ab-ffmpeg9 harness; triggering on it would A/B two identical images.
       - "containers/ffmpeg/**"
-      - "containers/srt/egress/**"
 
 permissions:
   contents: read
@@ -60,11 +62,13 @@ jobs:
         with:
           path: bridge-edge
 
-      - name: checkout bridge-edge (main, for baseline recipe)
+      - name: checkout bridge-edge (PR base, for baseline recipe)
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          ref: main
-          path: bridge-edge-main
+          # The merge target's recipe, not a hard-coded `main`: PRs aimed at release/hotfix
+          # branches must be measured against the baseline they would actually change.
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: bridge-edge-base
 
       - name: checkout wave-conformance harness (private, cross-repo)
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -78,12 +82,19 @@ jobs:
         with:
           node-version: "22"
 
+      - name: install harness dependencies (if it has any)
+        working-directory: wave-conformance
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          fi
+
       - name: build PR ffmpeg image
         working-directory: bridge-edge
         run: docker build -t ffmpeg-bench:pr -f containers/ffmpeg/Dockerfile containers/ffmpeg
 
-      - name: build main-recipe baseline ffmpeg image
-        working-directory: bridge-edge-main
+      - name: build base-recipe baseline ffmpeg image
+        working-directory: bridge-edge-base
         run: docker build -t ffmpeg-bench:baseline -f containers/ffmpeg/Dockerfile containers/ffmpeg
 
       - name: run smoke A/B subset (N=3)
@@ -99,6 +110,9 @@ jobs:
       - name: write advisory summary
         if: always()
         run: |
+          # Built into a regular file first: GITHUB_STEP_SUMMARY is a fresh per-step temp file,
+          # so the PR-comment step below could never read what this step appended to it. One
+          # shared file feeds both the job summary and the PR comment body.
           {
             echo "## ffmpeg A/B bench — ADVISORY (no pass/fail threshold in v1)"
             echo
@@ -114,7 +128,8 @@ jobs:
             else
               echo "_no result file produced — harness run may have failed; see job logs._"
             fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          } > "$GITHUB_WORKSPACE/bench-summary.md"
+          cat "$GITHUB_WORKSPACE/bench-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: post advisory PR comment
         if: always()
@@ -123,6 +138,6 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          if [ -f "$GITHUB_STEP_SUMMARY" ]; then
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$GITHUB_STEP_SUMMARY" || true
+          if [ -s "$GITHUB_WORKSPACE/bench-summary.md" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$GITHUB_WORKSPACE/bench-summary.md" || true
           fi
