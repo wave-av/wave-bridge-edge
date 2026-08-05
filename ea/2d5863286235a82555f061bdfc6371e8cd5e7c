@@ -1,0 +1,21 @@
+.github/workflows/ffmpeg-bench.yml
+  s_124891ed63801b::t_aa2c4134fde205 31-48,53-54
+  s_124891ed63801b::t_2cc54a1c9bae33 99,119-127
+  s_124891ed63801b::t_548b96bd755c5d 1-30,49-52,55-98,100-118,128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "ea2d5863286235a82555f061bdfc6371e8cd5e7c",
+  "prompts": {},
+  "sessions": {
+    "s_124891ed63801b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "657e721e-b9b4-4e0f-b7bb-049f27115a75",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
