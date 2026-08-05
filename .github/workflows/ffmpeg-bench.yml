@@ -20,6 +20,13 @@ on:
       # containers/srt/egress/** builds its own independent ffmpeg (n8.1.1 + libsrt) and is NOT
       # covered by the media-ab-ffmpeg9 harness; triggering on it would A/B two identical images.
       - "containers/ffmpeg/**"
+  push:
+    # Cache-warming only (see warm-baseline-cache). GHA cache entries written on a
+    # pull_request run are scoped to that PR's ref, so PR runs can never warm each
+    # other; only entries written on the base branch are readable by every PR.
+    branches: [main]
+    paths:
+      - "containers/ffmpeg/**"
 
 # Default read-only; the `bench` job alone elevates to pull-requests: write for its
 # advisory comment, so check-secret (and anything added later) stays least-privilege.
@@ -31,10 +38,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  warm-baseline-cache:
+    # Runs on push to main only: builds the current main recipe and writes its layers
+    # into the ffmpeg-bench-baseline GHA cache scope, which base-branch cache entries
+    # make readable from every PR run. Without this the baseline arm builds cold once
+    # per PR, because PR-run cache writes are scoped to that PR's own ref.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: build ffmpeg image (cache-warm only, image discarded)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: containers/ffmpeg
+          file: containers/ffmpeg/Dockerfile
+          cache-from: type=gha,scope=ffmpeg-bench-baseline
+          cache-to: type=gha,mode=max,scope=ffmpeg-bench-baseline
+
   check-secret:
     # `secrets` is not a valid context for a job-level `if` (only github/needs/vars/inputs are),
     # so whether CONFORMANCE_REPO_PAT is provisioned is resolved here in a step and passed to the
     # real job via an output — this is what lets `bench` no-op harmlessly pre-provisioning.
+    # pull_request only: push-to-main runs are cache-warming and never bench (skipping this
+    # job also skips `bench`, which `needs` it).
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     outputs:
       has_token: ${{ steps.check.outputs.has_token }}
@@ -126,9 +159,12 @@ jobs:
             echo "run_bench=$run_bench"
           } >> "$GITHUB_OUTPUT"
 
-      # BuildKit layer cache persisted in the GHA cache backend: the from-source AVM +
-      # ffmpeg compile stages are reused across runs instead of rebuilt every time.
-      # Separate cache scopes per arm so PR-recipe layers never evict baseline layers.
+      # BuildKit layer cache persisted in the GHA cache backend. Scoping caveat: cache
+      # entries a PR run writes are readable only by reruns/pushes of that same PR;
+      # cross-PR reuse comes exclusively from the ffmpeg-bench-baseline entries that
+      # warm-baseline-cache writes on pushes to main. Separate scopes per arm so
+      # PR-recipe layers never evict baseline layers; the PR arm additionally seeds
+      # from the baseline scope since the recipes usually share most layers.
       # `load: true` puts each image in the local docker daemon for the harness to run.
       - name: build PR ffmpeg image
         if: steps.recipe.outputs.run_bench == 'true'
@@ -138,7 +174,9 @@ jobs:
           file: bridge-edge/containers/ffmpeg/Dockerfile
           tags: ffmpeg-bench:pr
           load: true
-          cache-from: type=gha,scope=ffmpeg-bench-pr
+          cache-from: |
+            type=gha,scope=ffmpeg-bench-pr
+            type=gha,scope=ffmpeg-bench-baseline
           cache-to: type=gha,mode=max,scope=ffmpeg-bench-pr
 
       - name: build base-recipe baseline ffmpeg image
