@@ -1,0 +1,128 @@
+name: ffmpeg-bench
+
+# ADVISORY A/B benchmark gate for FFmpeg container changes.
+#
+# Wired per governance/plans/ffmpeg9-lei/E3-MEASURE.md P4 (wave-conformance#49): the P2/P3 work
+# established that this repo's runners show enough host-noise variance (Welch p=0.92 on a control
+# arm) that a strict pass/fail threshold on N=3 CI-runner samples would be indistinguishable from
+# scheduling luck. This job is ADVISORY ONLY in v1 — it posts medians+spread for a human to read,
+# it does not block merge. A future revision may add a threshold once a noise-floor baseline has
+# been established on THIS runner class specifically (see E3-P3 "no-claim" verdicts).
+#
+# The benchmark harness (media-ab-ffmpeg9.mjs) lives in the PRIVATE wave-conformance repo and is
+# consumed here ONLY via an authenticated cross-repo checkout — never vendored/copied/paraphrased
+# into this public repo. If CONFORMANCE_REPO_PAT is not provisioned, this job no-ops harmlessly.
+
+on:
+  pull_request:
+    paths:
+      - "containers/ffmpeg/**"
+      - "containers/srt/egress/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ffmpeg-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-secret:
+    # `secrets` is not a valid context for a job-level `if` (only github/needs/vars/inputs are),
+    # so whether CONFORMANCE_REPO_PAT is provisioned is resolved here in a step and passed to the
+    # real job via an output — this is what lets `bench` no-op harmlessly pre-provisioning.
+    runs-on: ubuntu-latest
+    outputs:
+      has_token: ${{ steps.check.outputs.has_token }}
+    steps:
+      - id: check
+        env:
+          TOKEN: ${{ secrets.CONFORMANCE_REPO_PAT }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  bench:
+    # Gated: no-ops harmlessly until CONFORMANCE_REPO_PAT is provisioned (a fine-grained PAT or
+    # GitHub App installation token scoped to read wave-av/wave-conformance). Do not invent a
+    # secret here — this `if` is what keeps the job from failing when it isn't provisioned yet.
+    needs: check-secret
+    if: needs.check-secret.outputs.has_token == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: checkout bridge-edge (PR head)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          path: bridge-edge
+
+      - name: checkout bridge-edge (main, for baseline recipe)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: main
+          path: bridge-edge-main
+
+      - name: checkout wave-conformance harness (private, cross-repo)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: wave-av/wave-conformance
+          ref: main
+          token: ${{ secrets.CONFORMANCE_REPO_PAT }}
+          path: wave-conformance
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+
+      - name: build PR ffmpeg image
+        working-directory: bridge-edge
+        run: docker build -t ffmpeg-bench:pr -f containers/ffmpeg/Dockerfile containers/ffmpeg
+
+      - name: build main-recipe baseline ffmpeg image
+        working-directory: bridge-edge-main
+        run: docker build -t ffmpeg-bench:baseline -f containers/ffmpeg/Dockerfile containers/ffmpeg
+
+      - name: run smoke A/B subset (N=3)
+        working-directory: wave-conformance
+        run: |
+          node media-ab-ffmpeg9.mjs \
+            --arm-a-image ffmpeg-bench:baseline \
+            --arm-b-image ffmpeg-bench:pr \
+            --runs 3 \
+            --subset smoke \
+            --out "$GITHUB_WORKSPACE/bench-result.json"
+
+      - name: write advisory summary
+        if: always()
+        run: |
+          {
+            echo "## ffmpeg A/B bench — ADVISORY (no pass/fail threshold in v1)"
+            echo
+            echo "N=3 smoke subset. Reported as medians + spread only — this repo's CI runners"
+            echo "show enough host-noise variance (see wave-conformance#49 / E3-P3: a control-arm"
+            echo "Welch test on N=5 came back p=0.92) that a hard threshold on N=3 would be"
+            echo "indistinguishable from scheduling luck. Read the numbers; don't auto-gate on them."
+            echo
+            if [ -f "$GITHUB_WORKSPACE/bench-result.json" ]; then
+              echo '```json'
+              cat "$GITHUB_WORKSPACE/bench-result.json"
+              echo '```'
+            else
+              echo "_no result file produced — harness run may have failed; see job logs._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: post advisory PR comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -f "$GITHUB_STEP_SUMMARY" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$GITHUB_STEP_SUMMARY" || true
+          fi
