@@ -56,15 +56,23 @@ jobs:
     needs: check-secret
     if: needs.check-secret.outputs.has_token == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # containers/ffmpeg compiles AVM + ffmpeg from source, twice (PR arm + baseline arm).
+    # Cold-cache that is well over 30 minutes on a hosted runner; the GHA BuildKit cache
+    # below makes warm runs much faster, but the cap must cover a cold build of both arms.
+    timeout-minutes: 120
     permissions:
       contents: read
       pull-requests: write # for the advisory `gh pr comment` step only
     steps:
+      # persist-credentials: false on every checkout (repo convention, see _checks.yml).
+      # It matters most for the harness checkout: without it CONFORMANCE_REPO_PAT is
+      # written into wave-conformance/.git/config and sits in the workspace while
+      # PR-authored content (the Dockerfile) is built and executed later in this job.
       - name: checkout bridge-edge (PR head)
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           path: bridge-edge
+          persist-credentials: false
 
       - name: checkout bridge-edge (PR base, for baseline recipe)
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -73,6 +81,7 @@ jobs:
           # branches must be measured against the baseline they would actually change.
           ref: ${{ github.event.pull_request.base.sha }}
           path: bridge-edge-base
+          persist-credentials: false
 
       - name: checkout wave-conformance harness (private, cross-repo)
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -83,6 +92,7 @@ jobs:
           ref: 15bf454b2b391f973f3e671745daf18a10ae2d72
           token: ${{ secrets.CONFORMANCE_REPO_PAT }}
           path: wave-conformance
+          persist-credentials: false
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
@@ -95,15 +105,36 @@ jobs:
             npm ci
           fi
 
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      # BuildKit layer cache persisted in the GHA cache backend: the from-source AVM +
+      # ffmpeg compile stages are reused across runs instead of rebuilt every time.
+      # Separate cache scopes per arm so PR-recipe layers never evict baseline layers.
+      # `load: true` puts each image in the local docker daemon for the harness to run.
       - name: build PR ffmpeg image
-        working-directory: bridge-edge
-        run: docker build -t ffmpeg-bench:pr -f containers/ffmpeg/Dockerfile containers/ffmpeg
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: bridge-edge/containers/ffmpeg
+          file: bridge-edge/containers/ffmpeg/Dockerfile
+          tags: ffmpeg-bench:pr
+          load: true
+          cache-from: type=gha,scope=ffmpeg-bench-pr
+          cache-to: type=gha,mode=max,scope=ffmpeg-bench-pr
 
       - name: build base-recipe baseline ffmpeg image
-        working-directory: bridge-edge-base
-        run: docker build -t ffmpeg-bench:baseline -f containers/ffmpeg/Dockerfile containers/ffmpeg
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: bridge-edge-base/containers/ffmpeg
+          file: bridge-edge-base/containers/ffmpeg/Dockerfile
+          tags: ffmpeg-bench:baseline
+          load: true
+          cache-from: type=gha,scope=ffmpeg-bench-baseline
+          cache-to: type=gha,mode=max,scope=ffmpeg-bench-baseline
 
       - name: run smoke A/B subset (N=3)
+        # ADVISORY: a harness error must not paint the check red (the summary step
+        # below already reports the missing-result case for a human to look into).
+        continue-on-error: true
         working-directory: wave-conformance
         run: |
           node media-ab-ffmpeg9.mjs \
@@ -114,7 +145,9 @@ jobs:
             --out "$GITHUB_WORKSPACE/bench-result.json"
 
       - name: write advisory summary
-        if: always()
+        # !cancelled(): still report after a failed build step, but a run superseded by
+        # cancel-in-progress must not post a meaningless "no result file" body.
+        if: ${{ !cancelled() }}
         run: |
           # Built into a regular file first: GITHUB_STEP_SUMMARY is a fresh per-step temp file,
           # so the PR-comment step below could never read what this step appended to it. One
@@ -137,13 +170,25 @@ jobs:
           } > "$GITHUB_WORKSPACE/bench-summary.md"
           cat "$GITHUB_WORKSPACE/bench-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: post advisory PR comment
-        if: always()
+      - name: post advisory PR comment (sticky)
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          MARKER: "<!-- ffmpeg-bench-advisory -->"
         run: |
-          if [ -s "$GITHUB_WORKSPACE/bench-summary.md" ]; then
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$GITHUB_WORKSPACE/bench-summary.md" || true
+          # Sticky: one advisory comment per PR, edited in place on each run (identified
+          # by a hidden marker) instead of appending a new comment on every push.
+          if [ ! -s "$GITHUB_WORKSPACE/bench-summary.md" ]; then
+            exit 0
+          fi
+          { echo "$MARKER"; echo; cat "$GITHUB_WORKSPACE/bench-summary.md"; } > "$GITHUB_WORKSPACE/bench-comment.md"
+          existing_id="$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" | head -n1)"
+          if [ -n "$existing_id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$existing_id" \
+              -F "body=@$GITHUB_WORKSPACE/bench-comment.md" || true
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$GITHUB_WORKSPACE/bench-comment.md" || true
           fi
