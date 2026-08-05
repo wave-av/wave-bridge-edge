@@ -107,25 +107,31 @@ jobs:
 
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      # A PR can ADD (or relocate) the ffmpeg recipe, in which case the merge target has
-      # no containers/ffmpeg/Dockerfile to build a baseline from. There is nothing to A/B
-      # against, so the builds and harness are skipped and the summary says why, instead
-      # of docker erroring out on a missing build context.
-      - name: check baseline recipe exists at merge target
-        id: baseline
+      # A PR can ADD, DELETE, or relocate the ffmpeg recipe (the paths filter matches all
+      # three), so the recipe must exist in BOTH arms for an A/B to make sense. Otherwise
+      # the builds and harness are skipped and the summary says which arm is missing,
+      # instead of docker erroring out on a missing build context.
+      - name: check recipe exists in both arms
+        id: recipe
         run: |
-          if [ -f bridge-edge-base/containers/ffmpeg/Dockerfile ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          head_exists=false
+          base_exists=false
+          if [ -f bridge-edge/containers/ffmpeg/Dockerfile ]; then head_exists=true; fi
+          if [ -f bridge-edge-base/containers/ffmpeg/Dockerfile ]; then base_exists=true; fi
+          run_bench=false
+          if [ "$head_exists" = "true" ] && [ "$base_exists" = "true" ]; then run_bench=true; fi
+          {
+            echo "head_exists=$head_exists"
+            echo "base_exists=$base_exists"
+            echo "run_bench=$run_bench"
+          } >> "$GITHUB_OUTPUT"
 
       # BuildKit layer cache persisted in the GHA cache backend: the from-source AVM +
       # ffmpeg compile stages are reused across runs instead of rebuilt every time.
       # Separate cache scopes per arm so PR-recipe layers never evict baseline layers.
       # `load: true` puts each image in the local docker daemon for the harness to run.
       - name: build PR ffmpeg image
-        if: steps.baseline.outputs.exists == 'true'
+        if: steps.recipe.outputs.run_bench == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: bridge-edge/containers/ffmpeg
@@ -136,7 +142,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=ffmpeg-bench-pr
 
       - name: build base-recipe baseline ffmpeg image
-        if: steps.baseline.outputs.exists == 'true'
+        if: steps.recipe.outputs.run_bench == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: bridge-edge-base/containers/ffmpeg
@@ -147,7 +153,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=ffmpeg-bench-baseline
 
       - name: run smoke A/B subset (N=3)
-        if: steps.baseline.outputs.exists == 'true'
+        if: steps.recipe.outputs.run_bench == 'true'
         # ADVISORY: a harness error must not paint the check red (the summary step
         # below already reports the missing-result case for a human to look into).
         continue-on-error: true
@@ -165,7 +171,8 @@ jobs:
         # cancel-in-progress must not post a meaningless "no result file" body.
         if: ${{ !cancelled() }}
         env:
-          HAS_BASELINE: ${{ steps.baseline.outputs.exists }}
+          HEAD_EXISTS: ${{ steps.recipe.outputs.head_exists }}
+          BASE_EXISTS: ${{ steps.recipe.outputs.base_exists }}
         run: |
           # Built into a regular file first: GITHUB_STEP_SUMMARY is a fresh per-step temp file,
           # so the PR-comment step below could never read what this step appended to it. One
@@ -178,9 +185,16 @@ jobs:
             echo "Welch test on N=5 came back p=0.92) that a hard threshold on N=3 would be"
             echo "indistinguishable from scheduling luck. Read the numbers; don't auto-gate on them."
             echo
-            if [ "$HAS_BASELINE" != "true" ]; then
+            # Empty flags mean the recipe check never ran (an earlier setup step failed) —
+            # that must not be reported as a definitive "nothing to compare" verdict.
+            if [ -z "$BASE_EXISTS" ] || [ -z "$HEAD_EXISTS" ]; then
+              echo "_bench setup did not complete (recipe check never ran) — see job logs._"
+            elif [ "$BASE_EXISTS" != "true" ]; then
               echo "_no baseline: the merge target has no containers/ffmpeg/Dockerfile (recipe is"
               echo "newly added or relocated by this PR), so there is nothing to A/B against._"
+            elif [ "$HEAD_EXISTS" != "true" ]; then
+              echo "_no PR arm: this PR removes or relocates containers/ffmpeg/Dockerfile, so"
+              echo "there is nothing to A/B against._"
             elif [ -f "$GITHUB_WORKSPACE/bench-result.json" ]; then
               echo '```json'
               cat "$GITHUB_WORKSPACE/bench-result.json"
@@ -205,8 +219,13 @@ jobs:
             exit 0
           fi
           { echo "$MARKER"; echo; cat "$GITHUB_WORKSPACE/bench-summary.md"; } > "$GITHUB_WORKSPACE/bench-comment.md"
-          existing_id="$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
-            --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" | head -n1)"
+          # Capture the full listing before taking the first line: piping --paginate
+          # straight into `head -n1` can SIGPIPE gh mid-fetch, and with pipefail that
+          # exit 141 would fail this advisory step. `|| true` also tolerates a flaky
+          # listing call — worst case a fresh comment is posted instead of an edit.
+          all_ids="$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" || true)"
+          existing_id="$(printf '%s\n' "$all_ids" | head -n1)"
           if [ -n "$existing_id" ]; then
             gh api -X PATCH "repos/$REPO/issues/comments/$existing_id" \
               -F "body=@$GITHUB_WORKSPACE/bench-comment.md" || true
