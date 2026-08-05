@@ -107,11 +107,25 @@ jobs:
 
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
+      # A PR can ADD (or relocate) the ffmpeg recipe, in which case the merge target has
+      # no containers/ffmpeg/Dockerfile to build a baseline from. There is nothing to A/B
+      # against, so the builds and harness are skipped and the summary says why, instead
+      # of docker erroring out on a missing build context.
+      - name: check baseline recipe exists at merge target
+        id: baseline
+        run: |
+          if [ -f bridge-edge-base/containers/ffmpeg/Dockerfile ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # BuildKit layer cache persisted in the GHA cache backend: the from-source AVM +
       # ffmpeg compile stages are reused across runs instead of rebuilt every time.
       # Separate cache scopes per arm so PR-recipe layers never evict baseline layers.
       # `load: true` puts each image in the local docker daemon for the harness to run.
       - name: build PR ffmpeg image
+        if: steps.baseline.outputs.exists == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: bridge-edge/containers/ffmpeg
@@ -122,6 +136,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=ffmpeg-bench-pr
 
       - name: build base-recipe baseline ffmpeg image
+        if: steps.baseline.outputs.exists == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: bridge-edge-base/containers/ffmpeg
@@ -132,6 +147,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=ffmpeg-bench-baseline
 
       - name: run smoke A/B subset (N=3)
+        if: steps.baseline.outputs.exists == 'true'
         # ADVISORY: a harness error must not paint the check red (the summary step
         # below already reports the missing-result case for a human to look into).
         continue-on-error: true
@@ -148,6 +164,8 @@ jobs:
         # !cancelled(): still report after a failed build step, but a run superseded by
         # cancel-in-progress must not post a meaningless "no result file" body.
         if: ${{ !cancelled() }}
+        env:
+          HAS_BASELINE: ${{ steps.baseline.outputs.exists }}
         run: |
           # Built into a regular file first: GITHUB_STEP_SUMMARY is a fresh per-step temp file,
           # so the PR-comment step below could never read what this step appended to it. One
@@ -160,7 +178,10 @@ jobs:
             echo "Welch test on N=5 came back p=0.92) that a hard threshold on N=3 would be"
             echo "indistinguishable from scheduling luck. Read the numbers; don't auto-gate on them."
             echo
-            if [ -f "$GITHUB_WORKSPACE/bench-result.json" ]; then
+            if [ "$HAS_BASELINE" != "true" ]; then
+              echo "_no baseline: the merge target has no containers/ffmpeg/Dockerfile (recipe is"
+              echo "newly added or relocated by this PR), so there is nothing to A/B against._"
+            elif [ -f "$GITHUB_WORKSPACE/bench-result.json" ]; then
               echo '```json'
               cat "$GITHUB_WORKSPACE/bench-result.json"
               echo '```'
