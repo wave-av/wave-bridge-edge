@@ -21,9 +21,10 @@ on:
       # covered by the media-ab-ffmpeg9 harness; triggering on it would A/B two identical images.
       - "containers/ffmpeg/**"
 
+# Default read-only; the `bench` job alone elevates to pull-requests: write for its
+# advisory comment, so check-secret (and anything added later) stays least-privilege.
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: ffmpeg-bench-${{ github.ref }}
@@ -56,6 +57,9 @@ jobs:
     if: needs.check-secret.outputs.has_token == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write # for the advisory `gh pr comment` step only
     steps:
       - name: checkout bridge-edge (PR head)
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -74,7 +78,9 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: wave-av/wave-conformance
-          ref: main
+          # SHA-pinned (main as of 2026-08-05) so reruns execute identical harness code;
+          # bump deliberately when the harness changes, same as this workflow's action pins.
+          ref: 15bf454b2b391f973f3e671745daf18a10ae2d72
           token: ${{ secrets.CONFORMANCE_REPO_PAT }}
           path: wave-conformance
 
