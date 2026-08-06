@@ -11,7 +11,7 @@ A Cloudflare Worker routes gateway traffic to Cloudflare Containers running nati
 | Protocol | Container | License | Status |
 |---|---|---|---|
 | SRT | libsrt (MPL-2.0) | open (weak copyleft) | spike planned (Wave 1) |
-| NDI | NDI Library | Newtek redistribution check pending | scaffolded, license-blocked |
+| NDI | NDI Library | NDI SDK licence terms apply | scaffolded |
 | Dante | DAL | Audinate partner license required | research |
 | OMT | open reference impl | open | spike planned (Wave 2) |
 | ffmpeg | open | open | transcode utility (all protocols) |
