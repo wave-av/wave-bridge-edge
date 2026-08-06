@@ -108,6 +108,25 @@ expect 0 'marker MENTIONED in smart quotes' \
 expect 1 'marker USED unquoted still blocks' \
   'Attaching the internal-only rollout plan; do not share outside the team.'
 
+# --- visible skip -------------------------------------------------------------
+# In CI an empty GUARD_PRIVATE_REPOS must not pass SILENTLY: every other path in
+# the script fails closed, and a quiet no-op over a whole leak class is the same
+# green-rubber-stamp failure mode. Still exit 0 — the other rules did run.
+printf '%s\n' 'Ordinary clean body, nothing to see.' > "$TMP/body.txt"
+out="$(GUARD_PRIVATE_REPOS='' GITHUB_ACTIONS=true bash "$SCRIPT" "$TMP/body.txt" 2>&1)"; rc=$?
+if [[ "$rc" == 0 ]] && printf '%s' "$out" | grep -q '^::warning.*private-repo-ops'; then
+  PASS=$((PASS+1)); printf '  ok   empty GUARD_PRIVATE_REPOS in CI warns, still exits 0\n'
+else
+  FAIL=$((FAIL+1)); printf '  FAIL empty GUARD_PRIVATE_REPOS in CI — want exit 0 + warning, got exit %s\n%s\n' "$rc" "$out"
+fi
+# Locally (outside GitHub Actions) the skip stays silent, as documented.
+out="$(env -u GITHUB_ACTIONS GUARD_PRIVATE_REPOS='' bash "$SCRIPT" "$TMP/body.txt" 2>&1)"; rc=$?
+if [[ "$rc" == 0 ]] && ! printf '%s' "$out" | grep -q '::warning'; then
+  PASS=$((PASS+1)); printf '  ok   empty GUARD_PRIVATE_REPOS locally skips silently\n'
+else
+  FAIL=$((FAIL+1)); printf '  FAIL empty GUARD_PRIVATE_REPOS locally — want exit 0, no warning, got exit %s\n%s\n' "$rc" "$out"
+fi
+
 # --- fail closed --------------------------------------------------------------
 # Invoked directly, not through expect(): expect() always materializes a file, so
 # it cannot reach these paths. A gate that returns "OK" when it was handed nothing

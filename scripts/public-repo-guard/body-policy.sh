@@ -123,7 +123,11 @@ check BLOCK internal-marker  '(?<![“"'"'"'`])\b(internal[- ]only|do\s+not\s+(s
 # of what is wired to what, and it is the shape that actually leaked.
 #
 # Names are NOT hardcoded (this file is public); CI injects them via the
-# GUARD_PRIVATE_REPOS variable. Unset locally → this check is skipped.
+# GUARD_PRIVATE_REPOS variable. Unset locally → this check is skipped silently.
+# In CI a skip is ANNOUNCED (see the warning below): everything else in this file
+# fails closed, and a quiet no-op over a whole leak class — e.g. because vars.*
+# were not exposed to a fork-triggered run — would be a green rubber stamp.
+PRIVATE_REPO_RULE_RAN=0
 if [[ -n "${GUARD_PRIVATE_REPOS:-}" ]]; then
   OPS_DETAIL='(?:[A-Z][A-Z0-9]*_(?:SECRET|TOKEN|KEY|PASSWORD)|wrangler\s+secret|secret\s+(?:is\s+)?(?:bound|binding|list)|(?:is\s+)?bound\s+on|service\s+binding|\d{2,}\s+secrets)'
   _ALT=''
@@ -135,6 +139,7 @@ if [[ -n "${GUARD_PRIVATE_REPOS:-}" ]]; then
     _ALT="${_ALT:+$_ALT|}${_esc}"
   done
   if [[ -n "$_ALT" ]]; then
+    PRIVATE_REPO_RULE_RAN=1
     # Both orders: name-then-detail and detail-then-name. Case-insensitivity is
     # scoped to the repo-name alternation with (?i:…) — a leading inline (?i)
     # would bleed into ${OPS_DETAIL} for the rest of the pattern and make its
@@ -146,6 +151,12 @@ if [[ -n "${GUARD_PRIVATE_REPOS:-}" ]]; then
       'A private WAVE repo named alongside internal operational detail (credential name, secret binding, or secret count) — the wiring topology is not public' \
       about-exempt
   fi
+fi
+# Non-blocking on purpose: failing every run of a repo that has not configured the
+# variable yet would get the whole gate switched off. A warning annotation makes
+# the gap visible on the check run without pretending the other rules did not run.
+if (( PRIVATE_REPO_RULE_RAN == 0 )) && [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  echo "::warning title=public-repo-guard (private-repo-ops)::GUARD_PRIVATE_REPOS is empty — the private-repo proximity rule scanned NOTHING this run. Set the repo/org variable (or note that fork-triggered runs may not receive vars.*); the other body rules did run."
 fi
 
 if (( VIOLATIONS > 0 )); then
