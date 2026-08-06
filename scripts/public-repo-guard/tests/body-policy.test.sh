@@ -15,7 +15,12 @@ trap 'rm -rf "$TMP"' EXIT
 
 # The names the real gate is configured with come from an org variable; the tests
 # pin their own so they are hermetic and do not depend on CI configuration.
-export GUARD_PRIVATE_REPOS="wave-gateway, wave-transports, agent-money"
+#
+# The pinned names are deliberately SYNTHETIC. This file is world-readable, and
+# GUARD_PRIVATE_REPOS exists precisely because private repo names must not be
+# hardcoded into a public tree — a fixture that pinned real names would label
+# them "private WAVE repos" in public, the exact disclosure the gate prevents.
+export GUARD_PRIVATE_REPOS="acme-gateway, acme-transports, acme-billing"
 
 PASS=0; FAIL=0
 
@@ -39,13 +44,13 @@ echo "body-policy fixtures"
 
 # --- must BLOCK ---------------------------------------------------------------
 expect 1 'private repo + credential name' \
-  'Flip is live: WAVE_VIEWPORT_LEASE_SECRET is bound on wave-gateway now.'
+  'Flip is live: WAVE_VIEWPORT_LEASE_SECRET is bound on acme-gateway now.'
 expect 1 'private repo + credential name, reverse order' \
-  'The MOQ_JOIN_SECRET was added; wave-transports picks it up on deploy.'
+  'The MOQ_JOIN_SECRET was added; acme-transports picks it up on deploy.'
 expect 1 'private repo + secret count' \
-  'wave-gateway went from 74 secrets to 75 after this change.'
+  'acme-gateway went from 74 secrets to 75 after this change.'
 expect 1 'private repo + service binding' \
-  'This adds a service binding from the worker to agent-money for settlement.'
+  'This adds a service binding from the worker to acme-billing for settlement.'
 expect 1 'operator home path' \
   'Repro: run it from /Users/someoperator/Documents/notes and it fails.'  # enforce-ignore (fixture)
 expect 1 'internal-only marker' \
@@ -65,22 +70,22 @@ expect 1 'internal tailscale IP' \
   'It resolves to 100.71.4.19 from inside the fleet.'
 # Repo names stay case-insensitive after scoping (?i:) to the name alternation.
 expect 1 'private repo name matches case-insensitively' \
-  'Wave-Gateway went from 74 secrets to 75 after this change.'
+  'Acme-Gateway went from 74 secrets to 75 after this change.'
 
 # --- must PASS (precision — these keep the gate deployable) -------------------
 expect 0 'bare private-repo cross-reference' \
-  'This is the companion change to wave-transports#260; merge that one first.'
+  'This is the companion change to acme-transports#260; merge that one first.'
 expect 0 'two private repos, no operational detail' \
-  'Both wave-gateway and wave-transports will need a follow-up for this.'
+  'Both acme-gateway and acme-transports will need a follow-up for this.'
 expect 0 'credential NAME with no private repo nearby' \
   'The handler now reads SOME_API_TOKEN from the environment instead of a literal.'
 # Regression: a leading inline (?i) used to bleed into OPS_DETAIL, so its
 # SCREAMING_CASE-only credential-name branch matched ordinary lowercase words
 # and everyday sentences near a repo name got blocked.
 expect 0 'lowercase api_key near a private repo name' \
-  'Reminder: wave-gateway now reads the api_key from config.'
+  'Reminder: acme-gateway now reads the api_key from config.'
 expect 0 'lowercase private_key near a private repo name' \
-  'See wave-gateway docs, section on the private_key rotation.'
+  'See acme-gateway docs, section on the private_key rotation.'
 # The about-the-control exemption still works where it should: prose rules.
 expect 0 'internal-only marker on a line discussing SECURITY.md' \
   'SECURITY.md explains why internal-only material must never be posted publicly.'
@@ -89,7 +94,7 @@ expect 0 'public runner path is not an operator path' \
 expect 0 'talking about the control' \
   'body-policy blocks a private repo named next to a SECRET_TOKEN; that is intended.'
 expect 0 'explicit guard:allow with a reason' \
-  'Example for the docs: wave-gateway holds EXAMPLE_SECRET — guard:allow documented-example'
+  'Example for the docs: acme-gateway holds EXAMPLE_SECRET — guard:allow documented-example'
 expect 0 'ordinary clean body' \
   'Bumps the draft revision and regenerates the fixtures. No behaviour change.'
 # Regression: the first CI run of this job failed on its own PR, because a review
