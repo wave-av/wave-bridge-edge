@@ -20,6 +20,13 @@
 # Allowlisting: a line carrying `guard:allow <reason>` is exempt (an accidental
 # leak never carries the marker; a deliberate one is visible in a public diff), as
 # is any line matching the ABOUT-THE-CONTROL allowlist below.
+#
+# In BODY text both markers are self-serve: the body's author can edit them in at
+# any time, with no reviewable diff. That is the same accepted trade as the
+# quoted-marker bypass documented below — the threat model is the ACCIDENTAL
+# paste, not a deliberate evader (who could as easily not write the leak, or edit
+# the body after the scan ran). The marker still leaves a visible trail: it sits
+# in the world-readable body and in GitHub's public edit history for it.
 set -uo pipefail
 
 FILE="${1:-}"
@@ -155,8 +162,14 @@ if [[ -n "${GUARD_PRIVATE_REPOS:-}" ]]; then
     # deliberately-SCREAMING_CASE credential-name branch match ordinary prose
     # like "api_key", blocking exactly the harmless sentences the design above
     # promises to leave alone.
+    #
+    # No \b in front of ${OPS_DETAIL}, in EITHER order. The credential-name
+    # branch spans at most one underscore, so in WAVE_VIEWPORT_LEASE_SECRET the
+    # only viable match start is LEASE_SECRET — preceded by "_", a word
+    # character. A boundary there made the name-then-detail order silently miss
+    # every multi-segment credential name while the mirrored order caught them.
     check BLOCK private-repo-ops \
-      "\\b(?i:${_ALT})\\b[^\\n]{0,140}?\\b${OPS_DETAIL}|${OPS_DETAIL}[^\\n]{0,140}?\\b(?i:${_ALT})\\b" \
+      "\\b(?i:${_ALT})\\b[^\\n]{0,140}?${OPS_DETAIL}|${OPS_DETAIL}[^\\n]{0,140}?\\b(?i:${_ALT})\\b" \
       'A private WAVE repo named alongside internal operational detail (credential name, secret binding, or secret count) — the wiring topology is not public' \
       about-exempt
   fi

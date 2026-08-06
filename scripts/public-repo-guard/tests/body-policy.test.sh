@@ -47,6 +47,12 @@ expect 1 'private repo + credential name' \
   'Flip is live: WAVE_VIEWPORT_LEASE_SECRET is bound on acme-gateway now.'
 expect 1 'private repo + credential name, reverse order' \
   'The MOQ_JOIN_SECRET was added; acme-transports picks it up on deploy.'
+# Regression: a \b in front of OPS_DETAIL made the name-then-detail order miss
+# multi-segment credential names — the only viable match start in
+# WAVE_VIEWPORT_LEASE_SECRET is LEASE_SECRET, and the character before it is "_",
+# a word character, so the boundary could never hold.
+expect 1 'private repo then multi-segment credential name' \
+  'acme-gateway now stores WAVE_VIEWPORT_LEASE_SECRET in wrangler.'
 expect 1 'private repo + secret count' \
   'acme-gateway went from 74 secrets to 75 after this change.'
 expect 1 'private repo + service binding' \
