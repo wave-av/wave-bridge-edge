@@ -10,7 +10,7 @@
 import { shell } from "@wave-av/spoke-chassis";
 import { TOKENS_CSS } from "./tokens.css";
 
-export const LANDING_INNER = `<h1>wave <span class="acc">Bridge</span></h1>
+export const LANDING_INNER = `<h1>WAVE <span class="acc">Bridge</span></h1>
 <p class="sub">Skip the firewall ticket — your feed just dials out.</p>
 <p class="sub" style="margin-top:.4rem">For a century a broadcast signal died at the edge of the facility: SRT boxes, an NDI subnet, Dante cabling, OMT — every one of them reachable only from inside the same building, and getting one onto the open internet meant a capture card, a dedicated circuit, a VPN someone babysits, or the request every broadcast engineer dreads: an inbound firewall exception. WAVE Bridge doesn't ask for that door. It only ever dials <span class="acc">out</span> — the one direction every facility firewall already allows.</p>
 <div></div>
