@@ -57,6 +57,8 @@ expect 1 'internal-only marker' \
 AKID_FIXTURE="AKI""A1234567890ABCDEF"
 expect 1 'AWS access key id' \
   "The failing job had ${AKID_FIXTURE} configured."
+expect 1 'AWS key mentioning the control still blocks' \
+  "public-repo-guard: investigate ${AKID_FIXTURE} immediately."
 expect 1 'internal tailscale IP' \
   'It resolves to 100.71.4.19 from inside the fleet.'
 

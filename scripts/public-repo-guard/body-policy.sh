@@ -50,9 +50,17 @@ check() {
   # silently errors out locally while working on GNU/CI — the gate would then
   # disagree with itself depending on where it ran. rg is already required above.
   local matches
-  matches="$(printf '%s' "$raw" \
-    | rg -vN -- 'guard:allow[[:space:]]+[^[:space:]]' \
-    | rg -vNiP -- "$ABOUT_THE_CONTROL" || true)"
+  # The control allowlist is only for low-signal policy-marker rules. Applying it
+  # to credential matches would discard a real secret when it shares a line with
+  # a reference to this gate (for example: "public-repo-guard: investigate AKIA…").
+  if [[ "$name" == internal-marker || "$name" == private-repo-ops ]]; then
+    matches="$(printf '%s' "$raw" \
+      | rg -vN -- 'guard:allow[[:space:]]+[^[:space:]]' \
+      | rg -vNiP -- "$ABOUT_THE_CONTROL" || true)"
+  else
+    matches="$(printf '%s' "$raw" \
+      | rg -vN -- 'guard:allow[[:space:]]+[^[:space:]]' || true)"
+  fi
   [[ -z "$matches" ]] && return 0
   local count; count="$(printf '%s\n' "$matches" | grep -c '')"
   # Print the LINE NUMBER only — never the matched text. This annotation is itself
