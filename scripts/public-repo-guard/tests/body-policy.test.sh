@@ -57,8 +57,15 @@ expect 1 'internal-only marker' \
 AKID_FIXTURE="AKI""A1234567890ABCDEF"
 expect 1 'AWS access key id' \
   "The failing job had ${AKID_FIXTURE} configured."
+# The about-the-control allowlist is for PROSE rules only. A formatted credential
+# on a line that happens to mention the security policy is still a live leak.
+expect 1 'credential on a line mentioning SECURITY.md still blocks' \
+  "Per SECURITY.md, reporting that ${AKID_FIXTURE} was pasted here."
 expect 1 'internal tailscale IP' \
   'It resolves to 100.71.4.19 from inside the fleet.'
+# Repo names stay case-insensitive after scoping (?i:) to the name alternation.
+expect 1 'private repo name matches case-insensitively' \
+  'Wave-Gateway went from 74 secrets to 75 after this change.'
 
 # --- must PASS (precision — these keep the gate deployable) -------------------
 expect 0 'bare private-repo cross-reference' \
@@ -67,6 +74,16 @@ expect 0 'two private repos, no operational detail' \
   'Both wave-gateway and wave-transports will need a follow-up for this.'
 expect 0 'credential NAME with no private repo nearby' \
   'The handler now reads SOME_API_TOKEN from the environment instead of a literal.'
+# Regression: a leading inline (?i) used to bleed into OPS_DETAIL, so its
+# SCREAMING_CASE-only credential-name branch matched ordinary lowercase words
+# and everyday sentences near a repo name got blocked.
+expect 0 'lowercase api_key near a private repo name' \
+  'Reminder: wave-gateway now reads the api_key from config.'
+expect 0 'lowercase private_key near a private repo name' \
+  'See wave-gateway docs, section on the private_key rotation.'
+# The about-the-control exemption still works where it should: prose rules.
+expect 0 'internal-only marker on a line discussing SECURITY.md' \
+  'SECURITY.md explains why internal-only material must never be posted publicly.'
 expect 0 'public runner path is not an operator path' \
   'CI checks out to /home/runner/work/repo/repo before the scan runs.'  # enforce-ignore (fixture)
 expect 0 'talking about the control' \
