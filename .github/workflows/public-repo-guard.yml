@@ -208,9 +208,15 @@ jobs:
             echo "::error title=public-repo-guard (body-guard)::Event payload contains no pull_request/issue/comment object — refusing to report a pass on an unscanned body."
             exit 1
           fi
-          jq -r '[.pull_request.title, .pull_request.body,
-                  .issue.title, .issue.body,
-                  .comment.body]
+          # Scope the scan to the text THIS event introduced. On issue_comment the
+          # issue title/body were already scanned when they were opened/edited;
+          # re-scanning them on every comment would make one unfixable historical
+          # issue body (posted before this gate existed) fail every future comment
+          # on the thread — and on issue/comment events that red lands on the
+          # default branch's commit status, not on the offending thread.
+          jq -r '(if .comment != null then [.comment.body]
+                  elif .pull_request != null then [.pull_request.title, .pull_request.body]
+                  else [.issue.title, .issue.body] end)
                  | map(select(. != null)) | join("\n")' \
             "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/bodyscan/body.txt"
           echo "scanning $(wc -l < "$RUNNER_TEMP/bodyscan/body.txt") line(s) of body text"

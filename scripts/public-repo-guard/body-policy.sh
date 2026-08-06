@@ -49,14 +49,22 @@ VIOLATIONS=0
 # explicit, visible `guard:allow <reason>` marker.
 ABOUT_THE_CONTROL='(public-repo-guard|body-policy|content-policy|public-github-write-gate|\bNDA\s+(gate|guard|policy|denylist|sweep|scan|hook)\b|\bno\s+NDA\b|responsib\w*\s+disclos|SECURITY\.md)'
 
-# check <BLOCK|WARN> <name> <regex> <why> [about-exempt]
+# check <BLOCK|WARN> <name> <regex> <why> [about-exempt] [multiline]
 check() {
-  local sev="$1" name="$2" re="$3" why="$4" about="${5:-}"
+  local sev="$1" name="$2" re="$3" why="$4" about="${5:-}" multi="${6:-}"
   [[ -z "$re" ]] && { echo "::error::body-policy: internal bug — empty regex for rule '$name'"; exit 2; }
   # rg exit: 0=match, 1=no match, >=2=real error → FAIL CLOSED. A gate that passes
   # because its scanner broke is worse than no gate: it reports success.
+  #
+  # `multiline` opts a rule into rg -U so its pattern can span line breaks. The
+  # allowlist filters below stay LINE-scoped on purpose: a multi-line match is
+  # exempted only where each of its printed lines carries the marker / matches
+  # the about-the-control list. Conservative by design — an allow marker on one
+  # line must not silently bless leak text on a neighbouring line.
   local raw rc
-  raw="$(rg -nP --no-filename -- "$re" "$FILE" 2>/dev/null)"; rc=$?
+  local -a _rgflags=(-nP --no-filename)
+  [[ "$multi" == "multiline" ]] && _rgflags+=(-U)
+  raw="$(rg "${_rgflags[@]}" -- "$re" "$FILE" 2>/dev/null)"; rc=$?
   if (( rc >= 2 )); then
     echo "::error title=public-repo-guard ($name)::ripgrep failed (exit $rc) scanning rule '$name' — failing closed."
     exit 2
@@ -133,6 +141,12 @@ check BLOCK internal-marker  '(?<![“"'"'"'`])\b(?i:internal[- ]only|do\s+not\s
 # secret-binding verb, a service binding, or a secret COUNT. That is the topology
 # of what is wired to what, and it is the shape that actually leaked.
 #
+# The window spans LINE BREAKS ([\s\S], scanned with rg -U). Real bodies are
+# markdown: the repo name sits in a heading or one bullet and the credential in
+# the next, which is exactly the shape of the motivating leak — a line-scoped
+# window would go blind on the most common layout while claiming "~140
+# characters" of proximity.
+#
 # Names are NOT hardcoded (this file is public); CI injects them via the
 # GUARD_PRIVATE_REPOS variable. Unset locally → this check is skipped silently.
 # In CI a skip is never quiet (see the block below): on a run that SHOULD have
@@ -147,7 +161,12 @@ if [[ -n "${GUARD_PRIVATE_REPOS:-}" ]]; then
   # would block the everyday sentences the design notes above promise to spare.
   OPS_DETAIL='(?:[A-Z][A-Z0-9]*_(?:SECRET|TOKEN|KEY|PASSWORD)|(?i:wrangler\s+secret|secret\s+(?:is\s+)?(?:bound|binding|list)|(?:is\s+)?bound\s+on|service\s+binding)|\d{2,}\s+secrets)'
   _ALT=''
-  IFS=', ' read -r -a _PRIV <<< "$GUARD_PRIVATE_REPOS"
+  # Split on commas, spaces, tabs AND newlines. A plain `read <<<` consumes only
+  # the FIRST line of a here-string, so a repo/org variable entered one name per
+  # line (the natural shape in the GitHub UI) would silently drop every name
+  # after the first while PRIVATE_REPO_RULE_RAN still reported the rule as live.
+  # The NUL terminator from printf lets `read -d ''` consume the whole value.
+  IFS=$', \t\n' read -r -d '' -a _PRIV < <(printf '%s\0' "$GUARD_PRIVATE_REPOS")
   for _name in "${_PRIV[@]}"; do
     [[ -z "$_name" ]] && continue
     # Regex-escape so metacharacters in a name match literally.
@@ -169,9 +188,9 @@ if [[ -n "${GUARD_PRIVATE_REPOS:-}" ]]; then
     # character. A boundary there made the name-then-detail order silently miss
     # every multi-segment credential name while the mirrored order caught them.
     check BLOCK private-repo-ops \
-      "\\b(?i:${_ALT})\\b[^\\n]{0,140}?${OPS_DETAIL}|${OPS_DETAIL}[^\\n]{0,140}?\\b(?i:${_ALT})\\b" \
+      "\\b(?i:${_ALT})\\b[\\s\\S]{0,140}?${OPS_DETAIL}|${OPS_DETAIL}[\\s\\S]{0,140}?\\b(?i:${_ALT})\\b" \
       'A private WAVE repo named alongside internal operational detail (credential name, secret binding, or secret count) — the wiring topology is not public' \
-      about-exempt
+      about-exempt multiline
   fi
 fi
 # An empty variable in CI is one of two very different situations, and the

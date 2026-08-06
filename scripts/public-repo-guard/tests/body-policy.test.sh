@@ -35,7 +35,8 @@ expect() {
     FAIL=$((FAIL+1)); printf '  FAIL %s — want exit %s, got %s\n%s\n' "$name" "$want" "$rc" "$out"
   fi
   # The annotation is world-readable; a hit must never echo the matched text.
-  if [[ "$rc" == 1 ]] && printf '%s' "$out" | grep -qF "$body"; then
+  # `--` so a body that starts with "-" (markdown bullet) is a pattern, not options.
+  if [[ "$rc" == 1 ]] && printf '%s' "$out" | grep -qF -- "$body"; then
     FAIL=$((FAIL+1)); printf '  FAIL %s — LEAKED the matched text into the annotation\n' "$name"
   fi
 }
@@ -89,6 +90,13 @@ expect 1 'sentence-initial Service binding near a private repo still blocks' \
   'Service binding added from the worker to acme-billing.'
 expect 1 'sentence-initial Wrangler secret near a private repo still blocks' \
   'Wrangler secret put on acme-gateway is done.'
+# Regression: the proximity window used [^\n]{0,140} with line-oriented rg, so a
+# markdown body with the repo name in one bullet and the credential in the next —
+# the exact shape of the motivating leak — passed silently.
+expect 1 'private repo and credential name on ADJACENT lines' \
+  $'Rollout notes for acme-gateway:\n- WAVE_LEASE_SECRET is bound already'
+expect 1 'credential in a bullet, private repo two lines below' \
+  $'- MOQ_JOIN_SECRET rotated\n- redeploy pending\n- acme-transports picks it up'
 
 # --- must PASS (precision — these keep the gate deployable) -------------------
 expect 0 'bare private-repo cross-reference' \
@@ -115,6 +123,11 @@ expect 0 'explicit guard:allow with a reason' \
   'Example for the docs: acme-gateway holds EXAMPLE_SECRET — guard:allow documented-example'
 expect 0 'ordinary clean body' \
   'Bumps the draft revision and regenerates the fixtures. No behaviour change.'
+# The cross-line window is still a WINDOW: name and credential far apart (>140
+# chars, across lines) stay a legitimate co-mention, not a wiring leak.
+_FILLER="$(printf 'y%.0s' {1..160})"
+expect 0 'private repo and credential more than 140 chars apart across lines' \
+  $'This is the companion change to acme-transports#260.\n'"${_FILLER}"$'\nUnrelatedly, SOME_API_TOKEN moved to the environment.'
 # Regression: the first CI run of this job failed on its own PR, because a review
 # bot edited the body to summarize the change and quoted the marker verbatim.
 expect 0 'marker MENTIONED in straight quotes is a description' \
@@ -125,6 +138,18 @@ expect 0 'marker MENTIONED in smart quotes' \
   'Blocks operator home paths and “internal-only” text.'
 expect 1 'marker USED unquoted still blocks' \
   'Attaching the internal-only rollout plan; do not share outside the team.'
+
+# --- newline-separated GUARD_PRIVATE_REPOS --------------------------------------
+# Regression: `read <<<` consumes only the first LINE of a here-string, so a
+# variable entered one name per line (the natural shape in the GitHub UI) silently
+# dropped every name after the first — while still reporting the rule as live.
+printf '%s\n' 'The MOQ_JOIN_SECRET was added; acme-transports picks it up on deploy.' > "$TMP/body.txt"
+out="$(GUARD_PRIVATE_REPOS=$'acme-gateway\nacme-transports\nacme-billing' bash "$SCRIPT" "$TMP/body.txt" 2>&1)"; rc=$?
+if [[ "$rc" == 1 ]]; then
+  PASS=$((PASS+1)); printf '  ok   newline-separated GUARD_PRIVATE_REPOS scans names after the first\n'
+else
+  FAIL=$((FAIL+1)); printf '  FAIL newline-separated GUARD_PRIVATE_REPOS — want exit 1, got %s\n%s\n' "$rc" "$out"
+fi
 
 # --- empty GUARD_PRIVATE_REPOS in CI -------------------------------------------
 # Two different situations, split by GUARD_PRIVATE_REPOS_EXPECTED (set by the
