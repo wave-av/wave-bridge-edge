@@ -120,16 +120,24 @@ expect 0 'marker MENTIONED in smart quotes' \
 expect 1 'marker USED unquoted still blocks' \
   'Attaching the internal-only rollout plan; do not share outside the team.'
 
-# --- visible skip -------------------------------------------------------------
-# In CI an empty GUARD_PRIVATE_REPOS must not pass SILENTLY: every other path in
-# the script fails closed, and a quiet no-op over a whole leak class is the same
-# green-rubber-stamp failure mode. Still exit 0 — the other rules did run.
+# --- empty GUARD_PRIVATE_REPOS in CI -------------------------------------------
+# Two different situations, split by GUARD_PRIVATE_REPOS_EXPECTED (set by the
+# workflow). On a same-repo run vars.* ARE delivered, so an empty value is a
+# misconfiguration and must FAIL CLOSED — a green check over an unscanned leak
+# class is the rubber-stamp failure mode. On a fork-triggered run GitHub
+# withholds vars.* entirely, so the skip is announced but non-blocking.
 printf '%s\n' 'Ordinary clean body, nothing to see.' > "$TMP/body.txt"
-out="$(GUARD_PRIVATE_REPOS='' GITHUB_ACTIONS=true bash "$SCRIPT" "$TMP/body.txt" 2>&1)"; rc=$?
-if [[ "$rc" == 0 ]] && printf '%s' "$out" | grep -q '^::warning.*private-repo-ops'; then
-  PASS=$((PASS+1)); printf '  ok   empty GUARD_PRIVATE_REPOS in CI warns, still exits 0\n'
+out="$(GUARD_PRIVATE_REPOS='' GUARD_PRIVATE_REPOS_EXPECTED=true GITHUB_ACTIONS=true bash "$SCRIPT" "$TMP/body.txt" 2>&1)"; rc=$?
+if [[ "$rc" == 2 ]] && printf '%s' "$out" | grep -q '^::error.*private-repo-ops'; then
+  PASS=$((PASS+1)); printf '  ok   empty GUARD_PRIVATE_REPOS on a same-repo CI run fails closed\n'
 else
-  FAIL=$((FAIL+1)); printf '  FAIL empty GUARD_PRIVATE_REPOS in CI — want exit 0 + warning, got exit %s\n%s\n' "$rc" "$out"
+  FAIL=$((FAIL+1)); printf '  FAIL empty GUARD_PRIVATE_REPOS expected in CI — want exit 2 + error, got exit %s\n%s\n' "$rc" "$out"
+fi
+out="$(env -u GUARD_PRIVATE_REPOS_EXPECTED GUARD_PRIVATE_REPOS='' GITHUB_ACTIONS=true bash "$SCRIPT" "$TMP/body.txt" 2>&1)"; rc=$?
+if [[ "$rc" == 0 ]] && printf '%s' "$out" | grep -q '^::warning.*private-repo-ops'; then
+  PASS=$((PASS+1)); printf '  ok   empty GUARD_PRIVATE_REPOS on a fork-shaped CI run warns, still exits 0\n'
+else
+  FAIL=$((FAIL+1)); printf '  FAIL empty GUARD_PRIVATE_REPOS on a fork-shaped run — want exit 0 + warning, got exit %s\n%s\n' "$rc" "$out"
 fi
 # Locally (outside GitHub Actions) the skip stays silent, as documented.
 out="$(env -u GITHUB_ACTIONS GUARD_PRIVATE_REPOS='' bash "$SCRIPT" "$TMP/body.txt" 2>&1)"; rc=$?

@@ -128,9 +128,9 @@ check BLOCK internal-marker  '(?<![“"'"'"'`])\b(?i:internal[- ]only|do\s+not\s
 #
 # Names are NOT hardcoded (this file is public); CI injects them via the
 # GUARD_PRIVATE_REPOS variable. Unset locally → this check is skipped silently.
-# In CI a skip is ANNOUNCED (see the warning below): everything else in this file
-# fails closed, and a quiet no-op over a whole leak class — e.g. because vars.*
-# were not exposed to a fork-triggered run — would be a green rubber stamp.
+# In CI a skip is never quiet (see the block below): on a run that SHOULD have
+# received the variable it FAILS CLOSED as a misconfiguration; on a fork run,
+# where GitHub withholds vars.* entirely, the skip is ANNOUNCED as a warning.
 PRIVATE_REPO_RULE_RAN=0
 if [[ -n "${GUARD_PRIVATE_REPOS:-}" ]]; then
   # Case-insensitivity is scoped PER BRANCH: the prose branches ("Wrangler
@@ -161,11 +161,23 @@ if [[ -n "${GUARD_PRIVATE_REPOS:-}" ]]; then
       about-exempt
   fi
 fi
-# Non-blocking on purpose: failing every run of a repo that has not configured the
-# variable yet would get the whole gate switched off. A warning annotation makes
-# the gap visible on the check run without pretending the other rules did not run.
+# An empty variable in CI is one of two very different situations, and the
+# workflow tells them apart via GUARD_PRIVATE_REPOS_EXPECTED:
+#   expected=true — a same-repo run, where GitHub DOES deliver vars.*, so an empty
+#     value is a misconfiguration. FAIL CLOSED (exit 2): a green check that
+#     scanned nothing for a whole leak class is exactly the rubber stamp every
+#     other path in this file refuses to be.
+#   otherwise — a fork-triggered (or Dependabot) run. GitHub withholds vars.*
+#     from those runs entirely (community/discussions/44322), so the value CANNOT
+#     arrive and failing would permanently red every fork PR — which gets the
+#     gate switched off. Announce the gap loudly instead; the other body rules
+#     all ran, and the same-repo re-scan on merge still has the full rule set.
 if (( PRIVATE_REPO_RULE_RAN == 0 )) && [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
-  echo "::warning title=public-repo-guard (private-repo-ops)::GUARD_PRIVATE_REPOS is empty — the private-repo proximity rule scanned NOTHING this run. Set the repo/org variable (or note that fork-triggered runs may not receive vars.*); the other body rules did run."
+  if [[ "${GUARD_PRIVATE_REPOS_EXPECTED:-}" == "true" ]]; then
+    echo "::error title=public-repo-guard (private-repo-ops)::GUARD_PRIVATE_REPOS is empty on a run that should receive it — the private-repo proximity rule scanned NOTHING. Set the repo/org variable; failing closed rather than reporting a pass."
+    exit 2
+  fi
+  echo "::warning title=public-repo-guard (private-repo-ops)::GUARD_PRIVATE_REPOS is empty (GitHub withholds vars.* from fork-triggered runs) — the private-repo proximity rule scanned NOTHING this run; the other body rules did run."
 fi
 
 if (( VIOLATIONS > 0 )); then

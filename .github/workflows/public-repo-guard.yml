@@ -218,4 +218,12 @@ jobs:
       - name: body policy (PR / issue / comment text)
         env:
           GUARD_PRIVATE_REPOS: ${{ vars.GUARD_PRIVATE_REPOS }}
+          # GitHub withholds vars.* from fork-triggered pull_request runs (and
+          # Dependabot's, which run as if from a fork). This flag tells the script
+          # whether an empty GUARD_PRIVATE_REPOS is a misconfiguration — a run
+          # that SHOULD have received the variable fails closed — or a platform
+          # gap on a fork run, which is announced as a warning instead, because
+          # the value cannot arrive there and a permanent red on every fork PR
+          # would get the gate switched off.
+          GUARD_PRIVATE_REPOS_EXPECTED: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
         run: bash scripts/public-repo-guard/body-policy.sh "$RUNNER_TEMP/bodyscan/body.txt"
