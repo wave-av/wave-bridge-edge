@@ -71,6 +71,18 @@ expect 1 'internal tailscale IP' \
 # Repo names stay case-insensitive after scoping (?i:) to the name alternation.
 expect 1 'private repo name matches case-insensitively' \
   'Acme-Gateway went from 74 secrets to 75 after this change.'
+# Regression: prose rules used to be case-sensitive, so the SAME phrase written
+# the normal way — capitalized at the start of a sentence — passed silently.
+expect 1 'sentence-initial "Do not share" still blocks' \
+  'Do not share this outside the team.'
+expect 1 'capitalized Internal-Only marker still blocks' \
+  'Attaching the Internal-Only rollout plan.'
+expect 1 'capitalized For Internal Use still blocks' \
+  'For Internal Use only, see attached.'
+expect 1 'sentence-initial Service binding near a private repo still blocks' \
+  'Service binding added from the worker to acme-billing.'
+expect 1 'sentence-initial Wrangler secret near a private repo still blocks' \
+  'Wrangler secret put on acme-gateway is done.'
 
 # --- must PASS (precision — these keep the gate deployable) -------------------
 expect 0 'bare private-repo cross-reference' \
