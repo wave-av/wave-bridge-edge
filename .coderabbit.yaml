@@ -120,7 +120,10 @@ reviews:
       enabled: true
       packages:
         - "ast-grep-essentials"
-    github_checks:
+    # Same inert-key class as `osvScanner` above: the schema key is `github-checks`,
+    # hyphenated; `github_checks` (snake_case) was silently accepted and ignored.
+    # Verified against the same live v2 schema dump (2026-08-06).
+    github-checks:
       enabled: true
       timeout_ms: 900000
 
