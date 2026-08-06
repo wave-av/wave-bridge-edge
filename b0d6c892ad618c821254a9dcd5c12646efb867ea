@@ -1,0 +1,21 @@
+.github/workflows/governance-enforce.yml
+  s_6f6453b23e3805::t_b42adc91e11ef4 46,48-53
+  s_6f6453b23e3805::t_16d1e09c9be42c 43
+  s_6f6453b23e3805::t_e17edc1c820572 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "b0d6c892ad618c821254a9dcd5c12646efb867ea",
+  "prompts": {},
+  "sessions": {
+    "s_6f6453b23e3805": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "de1b87be-6770-4480-95f9-9ade2a2d7eb6",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
