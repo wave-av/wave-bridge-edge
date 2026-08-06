@@ -87,8 +87,36 @@ jobs:
       - name: gitleaks (secret scan — published tree)
         run: gitleaks detect --no-git --source . --config .gitleaks.toml --redact --no-banner --exit-code 1
 
-      - name: Install ripgrep
-        run: command -v rg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep)
+      # Every rule in the policy scripts runs `rg -P` (PCRE2). Ubuntu's apt
+      # ripgrep is built WITHOUT PCRE2, so a bare `command -v rg || apt-get
+      # install ripgrep` fallback can swap in a binary on which every rule
+      # exits 2 and the gate fails closed on its first rule. Probe the
+      # capability explicitly; if the preinstalled rg lacks it, install the
+      # official release binary (PCRE2 compiled in), pinned and
+      # checksum-verified like gitleaks above.
+      - name: Install ripgrep (PCRE2 required)
+        env:
+          RIPGREP_VERSION: "14.1.1"
+          RIPGREP_SHA256: "4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e"
+        run: |
+          set -euo pipefail
+          if command -v rg >/dev/null && printf 'probe\n' | rg -qP 'probe'; then
+            echo "preinstalled $(rg --version | head -n1) has PCRE2"
+            exit 0
+          fi
+          curl -fsSL --proto '=https' --tlsv1.2 -o ripgrep.tar.gz \
+            "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/ripgrep-${RIPGREP_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${RIPGREP_SHA256}  ripgrep.tar.gz" | sha256sum -c -
+          tar -xzf ripgrep.tar.gz "ripgrep-${RIPGREP_VERSION}-x86_64-unknown-linux-musl/rg"
+          sudo install -m 0755 "ripgrep-${RIPGREP_VERSION}-x86_64-unknown-linux-musl/rg" /usr/local/bin/rg
+          rm -rf ripgrep.tar.gz "ripgrep-${RIPGREP_VERSION}-x86_64-unknown-linux-musl"
+          # The whole point of installing this build: refuse to proceed with
+          # an rg that cannot run the policy rules.
+          printf 'probe\n' | rg -qP 'probe' || {
+            echo "::error title=public-repo-guard::installed rg lacks PCRE2 support; the policy rules cannot run"
+            exit 1
+          }
+          echo "installed $(rg --version | head -n1) with PCRE2"
 
       - name: content policy (WAVE trade-secret / internal-leak gate)
         env:
@@ -134,8 +162,36 @@ jobs:
           sparse-checkout: scripts/public-repo-guard
           sparse-checkout-cone-mode: false
 
-      - name: Install ripgrep
-        run: command -v rg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep)
+      # Every rule in the policy scripts runs `rg -P` (PCRE2). Ubuntu's apt
+      # ripgrep is built WITHOUT PCRE2, so a bare `command -v rg || apt-get
+      # install ripgrep` fallback can swap in a binary on which every rule
+      # exits 2 and the gate fails closed on its first rule. Probe the
+      # capability explicitly; if the preinstalled rg lacks it, install the
+      # official release binary (PCRE2 compiled in), pinned and
+      # checksum-verified like gitleaks above.
+      - name: Install ripgrep (PCRE2 required)
+        env:
+          RIPGREP_VERSION: "14.1.1"
+          RIPGREP_SHA256: "4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e"
+        run: |
+          set -euo pipefail
+          if command -v rg >/dev/null && printf 'probe\n' | rg -qP 'probe'; then
+            echo "preinstalled $(rg --version | head -n1) has PCRE2"
+            exit 0
+          fi
+          curl -fsSL --proto '=https' --tlsv1.2 -o ripgrep.tar.gz \
+            "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/ripgrep-${RIPGREP_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${RIPGREP_SHA256}  ripgrep.tar.gz" | sha256sum -c -
+          tar -xzf ripgrep.tar.gz "ripgrep-${RIPGREP_VERSION}-x86_64-unknown-linux-musl/rg"
+          sudo install -m 0755 "ripgrep-${RIPGREP_VERSION}-x86_64-unknown-linux-musl/rg" /usr/local/bin/rg
+          rm -rf ripgrep.tar.gz "ripgrep-${RIPGREP_VERSION}-x86_64-unknown-linux-musl"
+          # The whole point of installing this build: refuse to proceed with
+          # an rg that cannot run the policy rules.
+          printf 'probe\n' | rg -qP 'probe' || {
+            echo "::error title=public-repo-guard::installed rg lacks PCRE2 support; the policy rules cannot run"
+            exit 1
+          }
+          echo "installed $(rg --version | head -n1) with PCRE2"
 
       # The body is read straight out of the event payload FILE and written to
       # another file. It is never interpolated into a run: block and never placed
