@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+- **Public story corrected to match shipped state** — README Status + protocol table + architecture diagram, and `capabilities.json`, now reflect reality: `/bridge` (MoQ) is **LIVE** (MOQ_BRIDGE binding provisioned; round-trips real objects through `moq.wave.online`), while the `/srt`/`/ndi`/`/omt`/`/playout`/`/egress` route handlers are **built** but fail-close to honest typed `501`: CF Containers have no public UDP ingress (architectural, not a roadmap gap), forwarding is gated off, and only SRT has a real sender image + provisioned binding (the NDI/OMT/ffmpeg images remain scaffolds with commented-out bindings). Previously the README claimed "serves only /health; all routes 501; SRT spike planned Wave 1" and `capabilities.json` claimed "no transport is live" — both undersold what ships. No transport state changed; forwarding remains inert behind `BRIDGE_FORWARD_ENABLED="false"`.
+
 ### Added
 - **SRT egress transport ACTIVATED** (#53) — `containers/srt/egress` is now a REAL sender: the `Dockerfile`
   builds `ffmpeg --enable-libsrt` + libsrt v1.5.5, and `server.mjs` opens an outbound `srt://` caller session
