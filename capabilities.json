@@ -7,12 +7,12 @@
   "foundationPin": "v1",
   "maintainers": [{ "team": "core" }],
   "exposes": {
-    "_note": "HONESTY: /bridge (MoQ) is LIVE — the MOQ_BRIDGE CF Container binding is provisioned and round-trips real objects through moq.wave.online (see src/moq.ts). /srt and /ndi are BUILT but fail-close to typed 501: CF Containers have no public UDP ingress (architectural, not a roadmap gap); /ndi additionally gated on Vizrt redistribution (#169). /dante is research-only (Audinate partner license). `metered` stays false — BRIDGE_FORWARD_ENABLED=\"false\" keeps forwarding inert. `scopes` are the canonical gateway read/write scopes (the API gateway scopes.ts, PR #71).",
+    "_note": "HONESTY: /bridge (MoQ) is LIVE — the MOQ_BRIDGE CF Container binding is provisioned and round-trips real objects through moq.wave.online (see src/moq.ts). The live MoQ surface is the HTTPS /bridge path on bridge.wave.online (not a raw moq:// listener); `live: true` reflects the production deployment where MOQ_BRIDGE is bound — deployments without the binding fail-close to a typed 501 (src/moq.ts). /srt and /ndi are BUILT but fail-close to typed 501: CF Containers have no public UDP ingress (architectural, not a roadmap gap); /ndi additionally gated on Vizrt redistribution (#169). /dante is research-only (Audinate partner license). `metered` stays false — BRIDGE_FORWARD_ENABLED=\"false\" keeps forwarding inert. `scopes` are the canonical gateway read/write scopes (the API gateway scopes.ts, PR #71).",
     "apis": [
       { "protocol": "srt", "endpoint": "srt://bridge.wave.online:9000", "auth": "wave-token-v1", "scopes": ["srt:read", "srt:write"], "status": "not_activated", "metered": false, "live": false },
       { "protocol": "ndi", "endpoint": "ndi://bridge.wave.online", "auth": "wave-token-v1", "scopes": ["ndi:read", "ndi:write"], "status": "not_activated", "metered": false, "live": false },
       { "protocol": "dante", "endpoint": "dante://bridge.wave.online", "auth": "wave-token-v1", "scopes": ["dante:read", "dante:write"], "status": "not_activated", "metered": false, "live": false },
-      { "protocol": "moq", "endpoint": "moq://bridge.wave.online", "auth": "wave-token-v1", "scopes": ["moq:read", "moq:write"], "status": "activated", "metered": false, "live": true }
+      { "protocol": "moq", "endpoint": "https://bridge.wave.online/bridge", "auth": "wave-token-v1", "scopes": ["moq:read", "moq:write"], "status": "activated", "metered": false, "live": true }
     ]
   },
   "consumes": {
@@ -29,5 +29,5 @@
       { "topic": "bridge.stream.closed", "transport": "x402-meter" }
     ]
   },
-  "tags": ["bridges", "public", "cf-containers", "x402-metered-planned", "protocol-plane-layer-2", "alpha-not-activated"]
+  "tags": ["bridges", "public", "cf-containers", "x402-metered-planned", "protocol-plane-layer-2", "alpha-moq-activated"]
 }
