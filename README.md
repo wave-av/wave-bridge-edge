@@ -6,15 +6,23 @@ A Cloudflare Worker routes gateway traffic to Cloudflare Containers running nati
 
 ## Status
 
-**Early / scaffold.** The Worker serves only `/health`; protocol routes return `501 BRIDGE_NOT_IMPLEMENTED`. Container scaffolds exist under [`containers/`](containers) (`srt`, `ndi`, `omt`, `ffmpeg`); the SRT spike is the first target.
+**LIVE, with honest typed-501s where hosting is architecturally impossible.**
+
+- `/bridge` (MoQ) — **LIVE.** Runs the proven MoQ strand in a CF Container that round-trips real objects through the live `moq.wave.online` relay (on-prem → Cloudflare → on-prem) and returns an integrity receipt. Fail-closes to a typed `501` only when the `MOQ_BRIDGE` container binding is absent.
+- `/srt`, `/ndi`, `/omt`, `/playout`, `/egress` — **built, honest typed `501`.** These strands are implemented (forward-shape behind default-off flags) but fail closed because CF Containers have **no public UDP ingress** — an architectural constraint, not a roadmap gap. `/ndi` is additionally gated on Vizrt NDI Advanced SDK redistribution (#169). `/playout` is the recorded-first ffmpeg file→transport stage.
+- Dante — research only (Audinate partner license required).
+- Also live: `/` landing, `/health`, `/sitemap.xml`, `/llms.txt`.
+
+> Forwarding is intentionally inert: `BRIDGE_FORWARD_ENABLED` stays `"false"` in [`wrangler.toml`](wrangler.toml). The MoQ strand runs live regardless — forwarding is a separate gate.
 
 | Protocol | Container | License | Status |
 |---|---|---|---|
-| SRT | libsrt (MPL-2.0) | open (weak copyleft) | spike planned (Wave 1) |
-| NDI | NDI Library | NDI SDK licence terms apply | scaffolded |
+| MoQ | container:moq | open | **LIVE** — round-trips through `moq.wave.online` |
+| SRT | libsrt (MPL-2.0) | open (weak copyleft) | built, typed 501 — no public UDP ingress |
+| NDI | NDI Library | NDI SDK licence terms apply | built, typed 501 + Vizrt redistribution gate (#169) |
+| OMT | open reference impl | open | built, typed 501 — no public UDP ingress |
+| ffmpeg | open | open | built as recorded-playout stage, typed 501 |
 | Dante | DAL | Audinate partner license required | research |
-| OMT | open reference impl | open | spike planned (Wave 2) |
-| ffmpeg | open | open | transcode utility (all protocols) |
 
 > **libsrt is MPL-2.0, not BSD.** Mozilla Public License 2.0 is *weak copyleft at file
 > granularity*: modifications to libsrt's own source files must be released under MPL-2.0, and
@@ -32,10 +40,11 @@ gateway.wave.online (auth / scope / meter)
         ▼
 bridge.wave.online (Worker — routes to the right Container)
         │
-        ├──→ container:srt    (libsrt UDP handler)
-        ├──→ container:ndi    (NDI Library; mDNS via Local Agent)
-        ├──→ container:dante  (DAL; only with Audinate partner license)
-        └──→ container:omt    (OMT reference impl)
+        ├──→ container:moq    (LIVE — MoQ strand, round-trips through moq.wave.online)
+        ├──→ container:srt    (libsrt UDP handler; typed 501 — no public UDP ingress)
+        ├──→ container:ndi    (NDI Library; mDNS via Local Agent; typed 501 + #169)
+        ├──→ container:omt    (OMT reference impl; typed 501 — no public UDP ingress)
+        └──→ container:ffmpeg (recorded-playout stage; typed 501)
 ```
 
 ## Develop
