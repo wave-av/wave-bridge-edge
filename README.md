@@ -9,19 +9,19 @@ A Cloudflare Worker routes gateway traffic to Cloudflare Containers running nati
 **LIVE, with honest typed-501s where hosting is architecturally impossible.**
 
 - `/bridge` (MoQ) — **LIVE.** Runs the proven MoQ strand in a CF Container that round-trips real objects through the live `moq.wave.online` relay (on-prem → Cloudflare → on-prem) and returns an integrity receipt. Fail-closes to a typed `501` only when the `MOQ_BRIDGE` container binding is absent.
-- `/srt`, `/ndi`, `/omt`, `/playout`, `/egress` — **built, honest typed `501`.** These strands are implemented (forward-shape behind default-off flags) but fail closed because CF Containers have **no public UDP ingress** — an architectural constraint, not a roadmap gap. `/ndi` is additionally gated on Vizrt NDI Advanced SDK redistribution (#169). `/playout` is the recorded-first ffmpeg file→transport stage.
+- `/srt`, `/ndi`, `/omt`, `/playout`, `/egress` — **route handlers built, honest typed `501`.** Every handler fail-closes: CF Containers have **no public UDP ingress** (an architectural constraint, not a roadmap gap) and forwarding stays gated off (`BRIDGE_FORWARD_ENABLED="false"`). Maturity varies per strand: `/srt` has a real egress sender image and a provisioned `SRT_BRIDGE` binding; the NDI, OMT, and ffmpeg container images are still scaffolds with their bindings commented out in [`wrangler.toml`](wrangler.toml). `/ndi` is additionally gated on Vizrt NDI Advanced SDK redistribution (#169). `/playout` is the recorded-first ffmpeg file→transport stage.
 - Dante — research only (Audinate partner license required).
-- Also live: `/` landing, `/health`, `/sitemap.xml`, `/llms.txt`.
+- Also live: `/health`. The worker also implements a `/` landing page, `/sitemap.xml`, and `/llms.txt`, but its path-scoped routes ([`wrangler.toml`](wrangler.toml)) deliberately leave the `bridge.wave.online` apex to the Core-Origin app, so those pages are not publicly served by this worker.
 
 > Forwarding is intentionally inert: `BRIDGE_FORWARD_ENABLED` stays `"false"` in [`wrangler.toml`](wrangler.toml). The MoQ strand runs live regardless — forwarding is a separate gate.
 
 | Protocol | Container | License | Status |
 |---|---|---|---|
 | MoQ | container:moq | open | **LIVE** — round-trips through `moq.wave.online` |
-| SRT | libsrt (MPL-2.0) | open (weak copyleft) | built, typed 501 — no public UDP ingress |
-| NDI | NDI Library | NDI SDK licence terms apply | built, typed 501 + Vizrt redistribution gate (#169) |
-| OMT | open reference impl | open | built, typed 501 — no public UDP ingress |
-| ffmpeg | open | open | built as recorded-playout stage, typed 501 |
+| SRT | libsrt (MPL-2.0) | open (weak copyleft) | typed 501 — sender image + binding provisioned; forwarding gated off, no public UDP ingress |
+| NDI | NDI Library | NDI SDK licence terms apply | typed 501 — image scaffold, binding unprovisioned + Vizrt redistribution gate (#169) |
+| OMT | open reference impl | open | typed 501 — image scaffold, binding unprovisioned; no public UDP ingress |
+| ffmpeg | open | open | typed 501 — recorded-playout stage; image scaffold, binding unprovisioned |
 | Dante | DAL | Audinate partner license required | research |
 
 > **libsrt is MPL-2.0, not BSD.** Mozilla Public License 2.0 is *weak copyleft at file
