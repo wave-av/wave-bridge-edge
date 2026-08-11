@@ -41,10 +41,10 @@ gateway.wave.online (auth / scope / meter)
 bridge.wave.online (Worker — routes to the right Container)
         │
         ├──→ container:moq    (LIVE — MoQ strand, round-trips through moq.wave.online)
-        ├──→ container:srt    (libsrt UDP handler; typed 501 — no public UDP ingress)
-        ├──→ container:ndi    (NDI Library; mDNS via Local Agent; typed 501 + #169)
-        ├──→ container:omt    (OMT reference impl; typed 501 — no public UDP ingress)
-        └──→ container:ffmpeg (recorded-playout stage; typed 501)
+        ├──→ container:srt    (libsrt sender; typed 501 — forwarding gated off, no public UDP ingress)
+        ├──→ container:ndi    (NDI Library; mDNS via Local Agent; typed 501 — unbound scaffold + #169)
+        ├──→ container:omt    (OMT reference impl; typed 501 — unbound scaffold, no public UDP ingress)
+        └──→ container:ffmpeg (recorded-playout stage; typed 501 — unbound scaffold)
 ```
 
 ## Develop
