@@ -16,6 +16,7 @@ import { Buffer } from 'node:buffer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { writeFileSync } from 'node:fs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STRAND = join(HERE, 'moq-strand.mjs');
@@ -173,13 +174,13 @@ const SOAK_TRACKS = {
  * structured JSON receipt: per-track sent/received/loss/e2e-latency, reconnects, and whether the
  * session survived the full requested duration.
  *
- * KNOWN GAP: moq-strand.mjs's `resolveConnectUrl` mints one join-token at connect time and has NO
- * re-mint/reconnect path — if the relay's join-token TTL is shorter than `seconds`, the socket will
- * close mid-soak with nothing here to recover it. That is exactly the gap this soak is meant to
- * expose (see `join_token_remint_supported` / `exited_early` in the receipt), not something this
- * change silently papers over.
+ * The vendored moq-strand.mjs reconnects in-process on unexpected socket close and RE-MINTS a fresh
+ * join-token each attempt (PR #137). So a mid-soak relay/CF close no longer kills the child — it
+ * recovers. In-session recoveries surface as `strand_reconnects` (parsed from the child's
+ * MOQ_STRAND_RECONNECT stderr marker); a non-zero `reconnects` / `exited_early` now means the child
+ * PROCESS exited unrecoverably (a genuine failure), not a routine socket blip.
  */
-async function runSoak(seconds) {
+async function runSoak(seconds, outPath) {
   const ns = `soak-${process.pid}`;
   const t0 = performance.now();
   const stopping = { value: false };
@@ -189,7 +190,7 @@ async function runSoak(seconds) {
   const tail = (s) => s.trim().split('\n').slice(-6).join(' | ') || '(no stderr)';
 
   async function startTrack(trackId, spec) {
-    const st = { sent: 0, got: new Map(), sendAt: new Map(), reconnects: 0, exitedEarly: false, label: spec.label };
+    const st = { sent: 0, got: new Map(), sendAt: new Map(), reconnects: 0, exitedEarly: false, label: spec.label, stderr: '' };
     state[trackId] = st;
 
     const sub = spawn('node', [STRAND, 'sub', ns, trackId], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -200,7 +201,7 @@ async function runSoak(seconds) {
       st.got.set(seq, { stamp, e2e_ms: s != null ? performance.now() - s : null });
     }));
     let subErr = '';
-    sub.stderr.on('data', (d) => { subErr += d; });
+    sub.stderr.on('data', (d) => { subErr += d; st.stderr += d; });
     sub.on('exit', () => { if (!stopping.value) { st.reconnects++; st.exitedEarly = true; } });
     try {
       await waitReady(sub, `sub:${trackId}`);
@@ -210,7 +211,7 @@ async function runSoak(seconds) {
 
     const pub = spawn('node', [STRAND, 'pub', ns, trackId], { stdio: ['pipe', 'ignore', 'pipe'] });
     let pubErr = '';
-    pub.stderr.on('data', (d) => { pubErr += d; });
+    pub.stderr.on('data', (d) => { pubErr += d; st.stderr += d; });
     pub.on('exit', () => { if (!stopping.value) { st.reconnects++; st.exitedEarly = true; } });
     try {
       await waitReady(pub, `pub:${trackId}`);
@@ -267,6 +268,7 @@ async function runSoak(seconds) {
     }
     e2es.sort((a, b) => a - b);
     const pct = (p) => (e2es.length ? Number(e2es[Math.min(e2es.length - 1, Math.floor(e2es.length * p))].toFixed(2)) : null);
+    const strand_reconnects = (st.stderr.match(/MOQ_STRAND_RECONNECT attempt=/g) || []).length;
     tracks[id] = {
       label: spec.label,
       sent: st.sent,
@@ -274,14 +276,15 @@ async function runSoak(seconds) {
       loss_pct: st.sent ? Number((100 * (1 - received / st.sent)).toFixed(3)) : null,
       e2e_p50_ms: pct(0.5),
       e2e_p99_ms: pct(0.99),
-      reconnects: st.reconnects,
+      reconnects: st.reconnects, // child-process exits (unrecoverable); in-session recoveries are strand_reconnects
+      strand_reconnects,
       exited_early: st.exitedEarly,
     };
     reconnectsTotal += st.reconnects;
     if (st.exitedEarly) survived = false;
   }
 
-  return {
+  const receipt = {
     ok: Object.values(tracks).every((t) => t.sent > 0 && !t.exited_early),
     service: 'wave-moq-bridge-soak',
     relay: RELAY,
@@ -291,10 +294,20 @@ async function runSoak(seconds) {
     tracks,
     reconnects_total: reconnectsTotal,
     survived_full_duration: survived,
-    join_token_remint_supported: false,
-    note: 'moq-strand.mjs mints one join-token at connect and has NO re-mint/reconnect path; if the ' +
-      'relay join-token TTL < duration_requested_s, expect exited_early=true / reconnects>0 above.',
+    join_token_remint_supported: true,
+    note: 'moq-strand.mjs reconnects in-process and re-mints a fresh join-token on unexpected close ' +
+      '(PR #137). strand_reconnects counts in-session recoveries; reconnects/exited_early count ' +
+      'unrecoverable child-process exits. survived_full_duration=false only if a child died for good.',
   };
+  if (outPath) {
+    try {
+      writeFileSync(outPath, JSON.stringify(receipt));
+      writeFileSync(`${outPath}.done`, `ok=${receipt.ok} survived=${receipt.survived_full_duration}\n`);
+    } catch (e) {
+      process.stderr.write(`soak: failed to write receipt to ${outPath}: ${e?.message ?? e}\n`);
+    }
+  }
+  return receipt;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -321,8 +334,9 @@ const server = http.createServer(async (req, res) => {
       1,
       Math.min(SOAK_MAX_SECONDS, Number(url.searchParams.get('seconds') ?? process.env.SOAK_SECONDS ?? SOAK_DEFAULT_SECONDS))
     );
+    const outPath = url.searchParams.get('out') ?? process.env.SOAK_OUT ?? null;
     try {
-      const receipt = await runSoak(seconds);
+      const receipt = await runSoak(seconds, outPath);
       res.writeHead(receipt.ok ? 200 : 502, { 'content-type': 'application/json' });
       res.end(JSON.stringify(receipt));
     } catch (err) {
