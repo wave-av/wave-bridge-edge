@@ -1,0 +1,19 @@
+.github/workflows/deploy.yml
+  s_db32c843c3b0d8::t_c3b5ad0a4f2735 36-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "6dfb7c61ee3d72de45664e636bb3afef1c6036cf",
+  "prompts": {},
+  "sessions": {
+    "s_db32c843c3b0d8": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_ffc5c4dfcffejokd1Gh83yiBtP",
+        "model": "mimo-v2.5"
+      },
+      "human_author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
