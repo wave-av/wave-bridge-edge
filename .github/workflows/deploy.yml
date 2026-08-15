@@ -33,6 +33,8 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@wave-av"
       - name: install
         run: npm ci
         env:
