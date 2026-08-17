@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STRAND = join(HERE, 'moq-strand.mjs');
@@ -324,9 +325,10 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(receipt.ok ? 200 : 502, { 'content-type': 'application/json' });
       res.end(JSON.stringify(receipt));
     } catch (err) {
-      console.error('wave-moq-bridge /bridge error', err);
+      const errorId = randomUUID();
+        console.error('wave-moq-bridge /bridge error', { errorId, n }, err);
       res.writeHead(502, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, service: 'wave-moq-bridge', relay: RELAY, error: 'bridge round-trip failed' }));
+      res.end(JSON.stringify({ ok: false, service: 'wave-moq-bridge', relay: RELAY, error: 'bridge round-trip failed', error_id: errorId }));
     }
     return;
   }
@@ -341,9 +343,10 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(receipt.ok ? 200 : 502, { 'content-type': 'application/json' });
       res.end(JSON.stringify(receipt));
     } catch (err) {
-      console.error('wave-moq-bridge /soak error', err);
+      const errorId = randomUUID();
+        console.error('wave-moq-bridge /soak error', { errorId, seconds }, err);
       res.writeHead(502, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, service: 'wave-moq-bridge-soak', relay: RELAY, error: 'soak failed' }));
+      res.end(JSON.stringify({ ok: false, service: 'wave-moq-bridge-soak', relay: RELAY, error: 'soak failed', error_id: errorId }));
     }
     return;
   }
