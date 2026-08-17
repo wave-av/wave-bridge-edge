@@ -324,8 +324,9 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(receipt.ok ? 200 : 502, { 'content-type': 'application/json' });
       res.end(JSON.stringify(receipt));
     } catch (err) {
+      console.error('wave-moq-bridge /bridge error', err);
       res.writeHead(502, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, service: 'wave-moq-bridge', relay: RELAY, error: String(err?.message ?? err) }));
+      res.end(JSON.stringify({ ok: false, service: 'wave-moq-bridge', relay: RELAY, error: 'bridge round-trip failed' }));
     }
     return;
   }
@@ -340,8 +341,9 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(receipt.ok ? 200 : 502, { 'content-type': 'application/json' });
       res.end(JSON.stringify(receipt));
     } catch (err) {
+      console.error('wave-moq-bridge /soak error', err);
       res.writeHead(502, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, service: 'wave-moq-bridge-soak', relay: RELAY, error: String(err?.message ?? err) }));
+      res.end(JSON.stringify({ ok: false, service: 'wave-moq-bridge-soak', relay: RELAY, error: 'soak failed' }));
     }
     return;
   }
