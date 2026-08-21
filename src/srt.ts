@@ -107,7 +107,9 @@ export async function forwardToContainer(
 		if (isContainerStartFailure(res.status, bodyText)) return srtUnavailableResponse();
 		return new Response(bodyText, { status: res.status, headers: res.headers });
 	}
-	return res;
+	const metered = new Headers(res.headers);
+	metered.set("x-wave-meter", "wave_bridge_minutes");
+	return new Response(res.body, { status: res.status, headers: metered });
 }
 
 /** TRUE only when the forward flag is on AND a real container binding exists. Today: always false. */
