@@ -94,6 +94,7 @@ export async function forwardToContainer(
 	ns: DurableObjectNamespace<SrtContainer | FfmpegContainer | NdiContainer | OmtContainer>,
 	request: Request,
 	poolSize: number = DEFAULT_POOL_SIZE,
+	meterValue?: string,
 ): Promise<Response> {
 	const container = getContainer(ns, poolContainerId("srt-bridge", poolSize));
 	let res: Response;
@@ -107,9 +108,12 @@ export async function forwardToContainer(
 		if (isContainerStartFailure(res.status, bodyText)) return srtUnavailableResponse();
 		return new Response(bodyText, { status: res.status, headers: res.headers });
 	}
-	const metered = new Headers(res.headers);
-	metered.set("x-wave-meter", "wave_bridge_minutes");
-	return new Response(res.body, { status: res.status, headers: metered });
+	if (meterValue) {
+		const metered = new Headers(res.headers);
+		metered.set("x-wave-meter", meterValue);
+		return new Response(res.body, { status: res.status, headers: metered });
+	}
+	return res;
 }
 
 /** TRUE only when the forward flag is on AND a real container binding exists. Today: always false. */
@@ -149,7 +153,12 @@ export async function handleSrt(request: Request, env: BridgeEnv): Promise<Respo
 	if (srtActivated(env)) {
 		// SHAPE: hand the request to the SRT container via getContainer (the MoQ pattern). Inert until the
 		// image + CF Containers land. The gateway has already authorized/scoped/metered upstream — pure forward.
-		return forwardToContainer(env.SRT_BRIDGE!, request, resolvePoolSize(env.SRT_POOL_SIZE));
+		return forwardToContainer(
+			env.SRT_BRIDGE!,
+			request,
+			resolvePoolSize(env.SRT_POOL_SIZE),
+			"wave_bridge_minutes",
+		);
 	}
 	return Response.json(notActivatedBody(request.method), {
 		status: 501,
