@@ -13,14 +13,22 @@ import { TOKENS_CSS } from "./tokens.css";
 export const LANDING_INNER = `<h1>WAVE <span class="acc">Bridge</span></h1>
 <p class="sub">Skip the firewall ticket — your feed just dials out.</p>
 <p class="sub" style="margin-top:.4rem">For a century a broadcast signal died at the edge of the facility: SRT boxes, an NDI subnet, Dante cabling, OMT — every one of them reachable only from inside the same building, and getting one onto the open internet meant a capture card, a dedicated circuit, a VPN someone babysits, or the request every broadcast engineer dreads: an inbound firewall exception. WAVE Bridge doesn't ask for that door. It only ever dials <span class="acc">out</span> — the one direction every facility firewall already allows.</p>
-<div></div>
-<pre>  broadcast gear (SRT / NDI / Dante / OMT)
-    │  inside the building — no inbound port required
-    ▼
-  Worker: bridge.wave.online  ──outbound──▶  moq.wave.online (live relay)
-    │
-    └─ <span class="dim">one WAVE-native stream, metered + routed through api.wave.online</span>
-</pre>
+<div class="box" style="margin:1.2rem 0;padding:1.1rem 1.3rem">
+<div class="flow">
+<div class="fnode"><strong>broadcast gear</strong><span class="dim">SRT · NDI · Dante · OMT</span></div>
+<div class="farrow">▼ <span class="dim">inside the building — no inbound port required</span></div>
+<div class="fnode"><strong>bridge.wave.online</strong><span class="dim">Worker — dials outbound only</span></div>
+<div class="farrow">▼ <span class="dim">outbound, the one direction every firewall already allows</span></div>
+<div class="fnode"><strong>moq.wave.online</strong><span class="dim">live relay — one WAVE-native stream</span></div>
+</div>
+<p class="dim" style="margin:.8rem 0 0">metered + routed through api.wave.online</p>
+</div>
+<style>
+.flow{display:flex;flex-direction:column;gap:.5rem}
+.fnode{border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:8px;padding:.7rem .9rem;display:flex;flex-direction:column;gap:.15rem}
+.fnode strong{font-size:.95rem}
+.farrow{color:var(--acc);font-size:.85rem;text-align:center}
+</style>
 <div class="row"><span class="k">hosted today</span><span><span class="acc">GET/POST</span> <span class="acc">/bridge</span> <span class="dim">→ MoQ strand, dials the relay outbound</span></span></div>
 <div class="row"><span class="k">wired, honest 501</span><span><span class="warn">/srt</span> <span class="warn">/ndi</span> <span class="warn">/omt</span> <span class="dim">— typed <code>not_activated</code>, never a fabricated stream</span></span></div>
 <div class="row"><span class="k">auth</span><span class="warn">Authorization: Bearer &lt;key&gt;</span> <span class="dim">(via gateway)</span></div>
