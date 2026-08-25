@@ -1,0 +1,16 @@
+package.json
+  h_af5ac1a9798224 19
+src/tokens.css.ts
+  h_af5ac1a9798224 5-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "5db9d204daa3fe031e48557927ba0b0e83525e3d",
+  "prompts": {},
+  "humans": {
+    "h_af5ac1a9798224": {
+      "author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
