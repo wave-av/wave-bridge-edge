@@ -1,0 +1,14 @@
+package-lock.json
+  h_af5ac1a9798224 13,1699-1701
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "a4df28de0969303afa7bac65b52bacb7cbec04f2",
+  "prompts": {},
+  "humans": {
+    "h_af5ac1a9798224": {
+      "author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
