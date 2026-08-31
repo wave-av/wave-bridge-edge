@@ -38,7 +38,7 @@ RUN git clone --depth=1 --branch=${FFMPEG_VERSION} https://git.ffmpeg.org/ffmpeg
     && cd /build/ffmpeg \
     && ./configure \
         --prefix=/usr/local \
-        --enable-gpl --enable-version3 --enable-nonfree \
+        --enable-gpl --enable-version3 \
         --enable-libaom --enable-libdav1d --enable-libsvtav1 --enable-librav1e \
         --enable-libx264 --enable-libx265 --enable-libvpx \
         --enable-libopus --enable-libvorbis \
@@ -60,5 +60,35 @@ COPY --from=builder /usr/local/lib/ /usr/local/lib/
 COPY --from=builder /usr/local/bin/ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=builder /usr/local/bin/aomenc /usr/local/bin/aomdec /usr/local/bin/
 RUN ldconfig
+
+# --- Licensing assertion: the binary we SHIP must be redistributable.
+# ---
+# --- `--enable-nonfree` was passed to configure until 2026-08-31 and was never needed. It enables
+# --- nothing on its own; it only PERMITS the nonfree components, and this build enables none of
+# --- them. Per FFmpeg n8.1.1 `configure`, the complete nonfree set is decklink, libfdk_aac,
+# --- libmpeghdec (:2004) and cuda_nvcc, cuda_sdk, libnpp (:2152). This build enables libaom,
+# --- libdav1d, libsvtav1, librav1e, libx264, libx265, libvpx, libopus, libvorbis, libwebp,
+# --- libopenjpeg and vulkan — not one of them is on either list.
+# ---
+# --- Nor is openssl involved: it is opt-in via `--enable-openssl`, which this configure line does
+# --- not pass, so the GPL/OpenSSL incompatibility that can force nonfree elsewhere never arises
+# --- here. (`libssl3` above is a runtime dep of other packages, not an ffmpeg component.)
+# ---
+# --- So the flag bought nothing and cost the right to redistribute this image.
+# ---
+# --- Asserted in the FINAL stage against the BUILT BINARY's own recorded configuration, not against
+# --- the text above: this is the artifact that actually ships, so reintroducing the flag by any
+# --- route — a rewritten configure line, a base change, a stale cached layer — fails here rather
+# --- than shipping quietly.
+RUN set -eu; \
+    conf="$(ffmpeg -hide_banner -buildconf 2>&1)"; \
+    if printf '%s' "$conf" | grep -q -- '--enable-nonfree'; then \
+      echo "ERROR: this ffmpeg is built nonfree, which makes the binary NON-REDISTRIBUTABLE."; \
+      echo "ERROR: shipping it in a pushed image is redistribution we have no licence for."; \
+      printf '%s\n' "$conf"; exit 1; \
+    fi; \
+    printf '%s' "$conf" | grep -q -- '--enable-gpl' \
+      || { echo "ERROR: buildconf lacks --enable-gpl - the assertion is reading the wrong thing"; exit 1; }; \
+    echo "OK: ffmpeg is not nonfree; this binary is redistributable."
 EXPOSE 8080/tcp
 ENTRYPOINT ["/usr/local/bin/ffmpeg"]
