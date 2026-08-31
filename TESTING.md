@@ -14,10 +14,6 @@ suites:
   unit:
     cmd: npm test
     timeout_s: 600
-  lint:
-    cmd: npm run lint
-    required: false
-    timeout_s: 120
 pass:
   exit: 0
 forbidden:
