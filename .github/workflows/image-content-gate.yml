@@ -1,38 +1,48 @@
-# image-content-gate — assert what this repo's container images actually SHIP.
+# image-content-gate — assert what containers/ndi actually SHIPS.
 #
-# Calls the fleet's reusable gate (wave-av/wave-foundation#1324). Why it exists here: a 2026-08-31
-# audit of all 174 wave-av repos found wave-ndi-edge was the ONLY repo with any CI assertion about
-# image CONTENT — every other publish lane, this one included, was ungated. The shared
-# wave-sec-gate.yml scans the git TREE, never a built image, and is advisory in every caller, so a
-# licensed binary present only in an image LAYER is invisible to every gate we run.
-# Tracking: wave-av/wave-foundation#1321.
+# VENDORED, NOT CALLED — and the reason is a defect this file's own first revision walked into.
 #
-# SCOPE — the NDI container only, deliberately.
-#   * containers/ndi fetches the NDI runtime at RUN time and must never bake it. That is a
-#     path-shaped claim, which is exactly what this gate decides.
-#   * containers/ffmpeg is NOT gated here. Its risk was never a path — it was the build FLAG
-#     (--enable-nonfree, now removed), and that is asserted inside its own Dockerfile against the
-#     built binary's buildconf. Putting it there rather than in CI is deliberate: it then runs in
-#     the lane that actually PUSHES, and a ~30-minute FFmpeg source build does not run per-PR.
+# The first attempt called the shared reusable gate directly:
+#   uses: wave-av/wave-foundation/.github/workflows/image-content-gate.yml@<sha>
+# That produced a **startup_failure**: no jobs, no logs, and NO CHECK ON THE PR AT ALL. `gh pr checks`
+# listed every other gate green and simply omitted this one, so the PR read CLEAN and merged.
 #
-# The `uses:` is SHA-pinned per pin-actions-by-sha. wave-foundation is PRIVATE and this repo is
-# PUBLIC; that combination works because the callee is set to access_level=organization — the same
-# path issue-ops-triage.yml already uses. NOTE: if that access is ever revoked the run dies at
-# STARTUP, which produces no jobs, no logs, and NO CHECK ON THE PR AT ALL — it does not fail loudly,
-# it vanishes. Check for its absence, not for its failure.
+# Cause: **a PUBLIC repository cannot call a reusable workflow stored in a PRIVATE one.**
+# `wave-foundation` is private, this repo is public, and setting the callee to
+# `access_level=organization` does NOT lift that — it governs which org repos may call it, not the
+# public/private boundary.
+#
+# The "precedent" cited when this was written — `issue-ops-triage.yml` here, calling
+# `wave-foundation/.github/workflows/io-triage.yml@<sha>` — is NOT a working precedent. Measured
+# 2026-08-31: it has concluded **failure on all 5 of its runs**, against a control (`test.yml`)
+# that succeeds, i.e. this repo's CI is fine and that specific cross-repo call is not. Its PRESENCE
+# was mistaken for evidence that it FUNCTIONS. See wave-av/wave-foundation#1321.
+#
+# So the gate body is vendored here verbatim from the merged
+# `wave-foundation/.github/workflows/image-content-gate.yml`. That matches what `foundation-gate.yml`
+# in this repo already does with `checks.yml` ("Mirrors ... keep them in sync"). The cost is drift:
+# a fix upstream does not reach this copy by itself.
+#
+# SCOPE — the NDI container only. containers/ffmpeg is asserted inside its own Dockerfile against
+# the built binary's buildconf, because its risk was a build FLAG, not a path, and that assertion
+# belongs in the lane that actually pushes.
+#
+# WHAT IT PROVES
+#   1. the flattened image filesystem contains no NDI runtime
+#   2. no INDIVIDUAL layer contains one either — `docker export` flattens, so a file added in an
+#      early layer and deleted in a later one is invisible to (1) while its blob still ships
+# Each carries a POSITIVE CONTROL: a zero out of a silently-empty listing is not a measurement.
+#
+# EXIT: 0 clean · 1 findings · 2 could-not-scan (never suppressed — "could not run" is not "clean").
 
 name: image-content-gate
 
 on:
   pull_request:
-    paths:
-      - 'containers/ndi/**'
-      - '.github/workflows/image-content-gate.yml'
+    paths: ['containers/ndi/**', '.github/workflows/image-content-gate.yml']
   push:
     branches: [main]
-    paths:
-      - 'containers/ndi/**'
-      - '.github/workflows/image-content-gate.yml'
+    paths: ['containers/ndi/**', '.github/workflows/image-content-gate.yml']
   workflow_dispatch:
 
 permissions: {}
@@ -40,15 +50,117 @@ permissions: {}
 jobs:
   ndi:
     name: containers/ndi ships no NDI runtime
-    uses: wave-av/wave-foundation/.github/workflows/image-content-gate.yml@0319019537b01a6e487e813c8536ff4baf64b265
-    with:
-      context: containers/ndi
-      image: wave-ndi-bridge:ci
-      # The NDI runtime and tool binaries. Vizrt-licensed; baking one into a pushed layer is
-      # redistribution we hold no position for. Reference: wave-av/wave-ndi-edge
-      # containers/ndi/LICENSING.md.
-      forbid: 'libndi|ndi-discovery-server|ndi-record|ndi-embedded-bridge|ndi-benchmark'
-      # Positive control: COPY'd by containers/ndi/Dockerfile. If this is absent the listing is not
-      # trustworthy and the gate exits 2 rather than reporting a clean zero.
-      control-path: usr/local/bin/entrypoint.sh
-      reason: 'wave-av/wave-ndi-edge containers/ndi/LICENSING.md'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      IMAGE: wave-ndi-bridge:ci
+      CONTEXT: containers/ndi
+      DOCKERFILE: ''
+      BUILD_ARGS: ''
+      # Vizrt-licensed NDI runtime and tool binaries. Baking one into a pushed layer is
+      # redistribution WAVE holds no position for — wave-av/wave-ndi-edge containers/ndi/LICENSING.md
+      FORBID: 'libndi|ndi-discovery-server|ndi-record|ndi-embedded-bridge|ndi-benchmark'
+      # Positive control: COPY'd by containers/ndi/Dockerfile. Absent => exit 2, never a clean zero.
+      CONTROL: usr/local/bin/entrypoint.sh
+      REASON: 'wave-av/wave-ndi-edge containers/ndi/LICENSING.md'
+      ADVISORY: 'false'
+    steps:
+      - name: checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: build the image to be gated
+        run: |
+          set -euo pipefail
+          df="${DOCKERFILE:-}"
+          [ -n "$df" ] || df="${CONTEXT}/Dockerfile"
+          [ -f "$df" ] || { echo "::error::COULD-NOT-SCAN: no Dockerfile at ${df}"; exit 2; }
+          args=()
+          while IFS= read -r line; do
+            [ -n "$line" ] && args+=(--build-arg "$line")
+          done <<< "${BUILD_ARGS}"
+          echo "==> docker build -t ${IMAGE} -f ${df} ${CONTEXT}"
+          # A build failure is a COULD-NOT-SCAN, not a finding: we learned nothing about the image.
+          docker build -t "$IMAGE" -f "$df" "${args[@]}" "$CONTEXT" || {
+            echo "::error::COULD-NOT-SCAN: the image failed to build, so nothing was measured."
+            exit 2
+          }
+
+      - name: scan the flattened filesystem AND every individual layer
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          cid=""
+          # shellcheck disable=SC2329  # invoked via trap, not directly
+          cleanup() { [ -n "$cid" ] && docker rm -f "$cid" >/dev/null 2>&1 || true; rm -rf "$work"; }
+          trap cleanup EXIT
+
+          findings=0
+
+          # ── 1. flattened filesystem ────────────────────────────────────────────────────────────
+          echo "--> [1/2] flattened image filesystem"
+          cid="$(docker create "$IMAGE")" || { echo "::error::COULD-NOT-SCAN: docker create failed"; exit 2; }
+          docker export "$cid" | tar -t > "$work/flat.txt" || { echo "::error::COULD-NOT-SCAN: docker export failed"; exit 2; }
+          echo "    entries: $(wc -l < "$work/flat.txt")"
+          grep -qF "$CONTROL" "$work/flat.txt" || {
+            echo "::error::COULD-NOT-SCAN: positive control '${CONTROL}' is absent from the flattened"
+            echo "::error::listing, so a zero out of it would not be a measurement. Fix control-path."
+            exit 2
+          }
+          if grep -E "$FORBID" "$work/flat.txt"; then
+            echo "::error::A forbidden path is in the image filesystem. See ${REASON}."
+            findings=1
+          else
+            echo "OK: flattened filesystem is clean."
+          fi
+
+          # ── 2. every individual layer ──────────────────────────────────────────────────────────
+          # This is the assertion the flattened scan CANNOT make. `docker save` emits the blobs that
+          # are pushed; a whiteout hides content from (1) but not from the blob.
+          echo "--> [2/2] every individual image LAYER"
+          docker save "$IMAGE" -o "$work/image.tar" || { echo "::error::COULD-NOT-SCAN: docker save failed"; exit 2; }
+          mkdir -p "$work/save"
+          tar -xf "$work/image.tar" -C "$work/save" || { echo "::error::COULD-NOT-SCAN: could not unpack docker save output"; exit 2; }
+          : > "$work/layers.txt"
+          layers=0
+          # Blobs are a mix of JSON (manifest/config) and layer tarballs; `tar -tf` fails on the JSON
+          # ones, and its auto-detection handles both gzipped and plain layers.
+          while IFS= read -r blob; do
+            if tar -tf "$blob" > "$work/one.txt" 2>/dev/null; then
+              layers=$((layers + 1))
+              cat "$work/one.txt" >> "$work/layers.txt"
+            fi
+          done < <(find "$work/save" -type f ! -name '*.json')
+          echo "    layers scanned: ${layers}; entries across all layers: $(wc -l < "$work/layers.txt")"
+          [ "$layers" -gt 0 ] || {
+            echo "::error::COULD-NOT-SCAN: no layer tarballs found in \`docker save\` output — the"
+            echo "::error::per-layer scan measured nothing at all."
+            exit 2
+          }
+          grep -qF "$CONTROL" "$work/layers.txt" || {
+            echo "::error::COULD-NOT-SCAN: positive control '${CONTROL}' is absent from the union of"
+            echo "::error::all ${layers} layers. The per-layer listing is not trustworthy."
+            exit 2
+          }
+          if grep -E "$FORBID" "$work/layers.txt"; then
+            echo "::error::A forbidden path is in an image LAYER. Even if a later layer deletes it,"
+            echo "::error::the layer blob is still pushed to the registry. See ${REASON}."
+            findings=1
+          else
+            echo "OK: clean across all ${layers} layers."
+          fi
+
+          # ── verdict ────────────────────────────────────────────────────────────────────────────
+          if [ "$findings" -eq 0 ]; then
+            echo "==> image-content-gate PASSED for ${IMAGE} (${layers} layers) — clear to publish."
+            exit 0
+          fi
+          if [ "$ADVISORY" = "true" ]; then
+            echo "::warning::image-content-gate found forbidden content, but this caller is advisory."
+            echo "::warning::The image is NOT clear to publish. Flip advisory to false once clean."
+            exit 0
+          fi
+          echo "::error::image-content-gate FAILED for ${IMAGE} — this image must not be published."
+          exit 1
