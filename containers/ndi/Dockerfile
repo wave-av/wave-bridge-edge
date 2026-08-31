@@ -17,6 +17,12 @@
 # from a Vizrt-authorized URL via NDI_SDK_URL once licensing closes.
 #
 # Until then this image health-passes but emits NotImplemented on protocol paths.
+#
+# This is the fleet-wide rule, not a local choice: the NDI runtime is operator-installed or fetched at
+# run time from a Vizrt-authorized source, NEVER committed and NEVER baked into an image. Headers may be
+# vendored under the SDK's MIT grant (SDK docs §4.1); the runtime may not. Written out in
+# wave-av/wave-ndi-edge → containers/ndi/LICENSING.md; reference implementation in wave-av/wave-ndi.
+# NDI® is a registered trademark of Vizrt NDI AB — https://ndi.video
 
 FROM golang:1.23-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \

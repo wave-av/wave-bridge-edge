@@ -15,6 +15,20 @@
 //     AND CF Containers is enabled AND (b) the redistribution clause clears (#169). No dormant fake
 //     success path exists.
 //
+// FLEET RULE (same rule, stated once, in every repo that touches NDI): the NDI runtime is
+// operator-installed or fetched at run time from a Vizrt-authorized source — it is NEVER committed and
+// NEVER baked into an image. Headers may be vendored under the SDK's MIT grant (SDK docs §4.1); the
+// runtime may not. `wave-av/wave-ndi-edge` → `containers/ndi/LICENSING.md` is the written-out version
+// of this posture, and `wave-av/wave-ndi` is the reference implementation (vendored headers only,
+// dlopen at run time, CI asserting nothing NDI is linked). This file's stance was already correct;
+// the crosslink exists so the two repos visibly agree rather than reading as independent opinions.
+// NDI® is a registered trademark of Vizrt NDI AB. <https://ndi.video>
+//
+// Note also that the licence gate itself is tracked under THREE numbers across the fleet — #119
+// (wave-ndi-edge / wave-realtime-edge#315), #142 (this repo's containers/ndi/Dockerfile and
+// adapter/cmd/bridge/main.go) and #169 (here) — none of which currently resolves to a live tracking
+// issue in the repo citing it. They want consolidating to one canonical issue.
+//
 // Trust model (see threat-model.md): bridge.wave.online sits BEHIND the WAVE API gateway. The gateway runs
 // authorize → scope(ndi:read|ndi:write) → entitlement → meter, then forwards with x-wave-org /
 // x-wave-tier attribution headers. This worker is the origin; it makes NO access decision of its own.
