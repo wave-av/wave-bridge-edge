@@ -1,0 +1,84 @@
+name: bundle eval gate
+
+# Systemic prevention for wave-av/wave-moq-edge #215 — a 5-day prod outage where every
+# `wrangler deploy --env production` failed at Cloudflare's upload step with `Uncaught
+# ReferenceError: buildTokensCss is not defined`, while `tsc --noEmit` (typecheck.yml) and a
+# bundle-only `wrangler deploy --dry-run` (npm run check / deploy:dry) both stayed green the
+# whole time. Neither typechecks nor bundles EVALUATE the produced JS — Cloudflare's upload step
+# does that server-side, which is why the break shipped silently. wave-bridge-edge auto-deploys
+# to prod on every push to main (deploy.yml, gated only on the CLOUDFLARE_API_TOKEN secret being
+# present) and had NO such gate before this PR — ported from the proven wave-moq-edge PR #217
+# template via its pilot rollout.
+#
+# This job boots the actual Worker bundle inside workerd via `wrangler dev` (local mode, zero
+# Cloudflare credentials) — the same bundling path `wrangler deploy` uses, then a real workerd
+# isolate loads the module graph exactly like Cloudflare's upload-time evaluation does. A
+# top-level ReferenceError/SyntaxError fails the boot before "Ready on" ever prints, and the gate
+# script (scripts/ci/bundle-eval-gate.mjs) fails loudly with the captured error.
+#
+# wave-bridge-edge adaptation: unlike the pilot ([ai]/[[vectorize]] — a credential problem),
+# this repo's wrangler.toml has no remote-credential-only bindings; its two `[[containers]]`
+# blocks (MoqContainer, SrtContainer) DO boot locally via Docker with zero CF credentials. They
+# are stripped from the gate's derived config anyway because containers/srt/egress/Dockerfile
+# compiles ffmpeg+libsrt from source on every uncached run — a multi-minute cold build that is
+# the wrong shape for a fast per-push JS-eval gate and duplicates deploy.yml's own container
+# build. See the gate script's header for the full writeup and the verified-both-directions
+# transcript.
+#
+# Making this a REQUIRED status check (branch protection) is the durable half of the fix — this
+# workflow file only adds the check; enabling branch protection is managed out-of-band.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "wrangler.toml"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/ci/bundle-eval-gate.mjs"
+      - ".github/workflows/bundle-eval-gate.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "wrangler.toml"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/ci/bundle-eval-gate.mjs"
+      - ".github/workflows/bundle-eval-gate.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: bundle-eval-gate-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read # read @wave-av scoped packages via GITHUB_TOKEN — mirrors typecheck.yml/test.yml
+
+jobs:
+  bundle-eval:
+    name: boot worker bundle in workerd
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@wave-av"
+
+      - name: install
+        run: npm ci --no-audit --no-fund
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Boot the Worker bundle in workerd (module-eval gate)
+        # Deliberately NO CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID — the gate script strips
+        # the two container bindings before booting (see its header), so it needs neither a
+        # Cloudflare credential nor Docker.
+        run: npm run test:bundle-eval
