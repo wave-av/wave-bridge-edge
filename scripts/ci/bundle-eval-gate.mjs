@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // scripts/ci/bundle-eval-gate.mjs
 //
-// Ported from wave-av/wave-moq-edge PR #217 (merged to main) via the wave-gateway pilot
-// (wave-av/wave-gateway PR #1480), the systemic prevention for moq-edge #215 — a 5-day prod
+// Ported from wave-av/wave-moq-edge PR #217 (merged to main) via the pilot rollout, the
+// systemic prevention for moq-edge #215 — a 5-day prod
 // outage where every `wrangler deploy --env production` failed at Cloudflare's upload step with
 // `Uncaught ReferenceError: buildTokensCss is not defined`, while `tsc --noEmit` (typecheck.yml)
 // and a bundle-only `wrangler deploy --dry-run` (npm run check / deploy:dry) both stayed green
@@ -18,8 +18,8 @@
 // script fails loudly with the captured error. A clean boot + one successful HTTP round trip is
 // the only thing that passes.
 //
-// ── wave-bridge-edge-specific adaptation (vs. the wave-gateway template) ───────────────────────
-// wave-gateway's audit stripped `[ai]` / `[[vectorize]]` — bindings that literally cannot bind
+// ── wave-bridge-edge-specific adaptation (vs. the pilot template) ──────────────────────────────
+// The pilot's audit stripped `[ai]` / `[[vectorize]]` — bindings that literally cannot bind
 // locally without a live Cloudflare account. wave-bridge-edge has NEITHER of those; its
 // wrangler.toml audited clean of remote-credential-only bindings. Instead it declares TWO
 // `[[containers]]` blocks (MoqContainer, SrtContainer) whose images ARE buildable fully locally
@@ -163,8 +163,8 @@ async function main() {
         WRANGLER_UPDATE_CHECK: "false",
         WRANGLER_SEND_METRICS: "false",
         // Deliberately NO CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID — this gate proves the
-        // bundle evaluates with zero Cloudflare credentials, matching wave-gateway's #731/PR
-        // #1480 posture: no deploy-capable secret belongs in a job that runs on every PR push.
+        // bundle evaluates with zero Cloudflare credentials, matching the pilot's posture: no
+        // deploy-capable secret belongs in a job that runs on every PR push.
         CLOUDFLARE_API_TOKEN: "",
         CLOUDFLARE_ACCOUNT_ID: "",
         CF_API_TOKEN: "",

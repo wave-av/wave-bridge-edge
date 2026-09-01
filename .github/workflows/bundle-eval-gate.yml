@@ -8,7 +8,7 @@ name: bundle eval gate
 # does that server-side, which is why the break shipped silently. wave-bridge-edge auto-deploys
 # to prod on every push to main (deploy.yml, gated only on the CLOUDFLARE_API_TOKEN secret being
 # present) and had NO such gate before this PR — ported from the proven wave-moq-edge PR #217
-# template via its wave-gateway pilot (wave-av/wave-gateway PR #1480).
+# template via its pilot rollout.
 #
 # This job boots the actual Worker bundle inside workerd via `wrangler dev` (local mode, zero
 # Cloudflare credentials) — the same bundling path `wrangler deploy` uses, then a real workerd
@@ -16,7 +16,7 @@ name: bundle eval gate
 # top-level ReferenceError/SyntaxError fails the boot before "Ready on" ever prints, and the gate
 # script (scripts/ci/bundle-eval-gate.mjs) fails loudly with the captured error.
 #
-# wave-bridge-edge adaptation: unlike wave-gateway ([ai]/[[vectorize]] — a credential problem),
+# wave-bridge-edge adaptation: unlike the pilot ([ai]/[[vectorize]] — a credential problem),
 # this repo's wrangler.toml has no remote-credential-only bindings; its two `[[containers]]`
 # blocks (MoqContainer, SrtContainer) DO boot locally via Docker with zero CF credentials. They
 # are stripped from the gate's derived config anyway because containers/srt/egress/Dockerfile
