@@ -1,0 +1,26 @@
+scripts/ci/bundle-eval-gate.mjs
+  s_3c7a371f5618a4::t_7596f688e6310c 1-286
+.gitignore
+  s_3c7a371f5618a4::t_6b58e5403d6fad 7-12
+.github/workflows/bundle-eval-gate.yml
+  s_3c7a371f5618a4::t_988ace9c6e826d 25
+  s_3c7a371f5618a4::t_ff031c91928ff7 1-24,26-84
+package.json
+  s_3c7a371f5618a4::t_0f0b7b44affa1f 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "8a4f147946761b0d27a123f6257b6d304cd99dae",
+  "prompts": {},
+  "sessions": {
+    "s_3c7a371f5618a4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5bd8e1fc-0b4d-4027-8f86-88e3237e562e",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
