@@ -24,6 +24,9 @@ import { resolvePoolSize, poolContainerId, isContainerStartFailure, DEFAULT_POOL
 import type { SrtContainer, FfmpegContainer, NdiContainer, OmtContainer } from "./containers";
 
 export interface BridgeEnv {
+	/** Deploy commit sha, stamped per-deploy via the CI var override (deploy.yml). Echoed on
+	 *  /health so CI's post-deploy verify step can prove the live worker matches this run. */
+	GIT_SHA?: string;
 	/** Default-OFF activation flag. Unset/"false" = honest 501 for every protocol. Flipping to "true"
 	 *  only takes effect when the matching per-protocol binding is ALSO present — otherwise each route
 	 *  still fail-closes to its typed 501 (no fake transport on any protocol). */

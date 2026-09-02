@@ -34,6 +34,7 @@ export default {
 				service: "wave-bridge-edge",
 				layer: "bridges",
 				version: "dev",
+				sha: env.GIT_SHA || null,
 			});
 		}
 		if (url.pathname === "/sitemap.xml") {
