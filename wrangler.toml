@@ -56,6 +56,10 @@ BRIDGE_FORWARD_ENABLED = "false"
 # `wrangler secret put WAVE_MOQ_TOKEN`), NOT a var — never commit the token value.
 WAVE_MOQ_JOIN = "1"
 WAVE_MOQ_GATEWAY = "https://api.wave.online"
+# GIT_SHA: default placeholder for local dev / `wrangler deploy --dry-run`. deploy.yml overrides
+# this per-deploy with `--var GIT_SHA:${{ github.sha }}` (no toml edit needed). /health echoes it
+# back so CI's post-deploy verify step can prove the live worker is running THIS commit.
+GIT_SHA = "unset"
 
 # MoQ container binding — LIVE (WB-6 / E4). The one strand that genuinely runs hosted: CF Containers
 # have no public UDP ingress, but the MoQ strand reaches the relay over an OUTBOUND WebSocket, which
