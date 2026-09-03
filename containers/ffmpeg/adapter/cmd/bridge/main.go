@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 var errNotImplemented = errors.New("wave-ffmpeg-bridge: job queue not yet wired")
@@ -49,7 +50,14 @@ func main() {
 		http.Error(w, errNotImplemented.Error(), http.StatusNotImplemented)
 	})
 
-	server := &http.Server{Addr: ":8080", Handler: mux}
+	server := &http.Server{
+		Addr:              ":8080",
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second, // bound slow-header clients (Slowloris class); aikido 471475461
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 	go func() {
