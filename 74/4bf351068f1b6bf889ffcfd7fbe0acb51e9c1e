@@ -1,0 +1,26 @@
+test/chassis.spec.ts
+  s_73ce9d874d7339::t_52c7a2e181568c 1-71
+src/worker.ts
+  s_73ce9d874d7339::t_4441d2a13b9936 14-32
+  s_73ce9d874d7339::t_31551fea203ea3 40,42-44
+package-lock.json
+  s_73ce9d874d7339::t_0a30cabe73fb2f 13,1699-1701
+package.json
+  s_73ce9d874d7339::t_210769d233d9ef 20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "744bf351068f1b6bf889ffcfd7fbe0acb51e9c1e",
+  "prompts": {},
+  "sessions": {
+    "s_73ce9d874d7339": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98a8bbf9-cb78-42d8-a6f5-f3aaa2c16b46",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
