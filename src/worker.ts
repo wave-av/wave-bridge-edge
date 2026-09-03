@@ -11,6 +11,25 @@ import { handleEgress } from "./egress";
 import { handleMoqBridge, MoqContainer, type MoqEnv } from "./moq";
 import { SrtContainer, FfmpegContainer, NdiContainer, OmtContainer } from "./containers";
 import { landingPage } from "./landing";
+import { makeFetch, markSvg } from "@wave-av/spoke-chassis";
+import { TOKENS_CSS } from "./tokens.css";
+
+// Chassis surfaces the landing shell references but this hand-written router never served: the
+// consent/CTA/nav scripts under /_wave/*, the funnel beacon (POST /_wave/e → 204) + presence route
+// (/_wave/funnel.json), /favicon.svg and /robots.txt. Delegated to the chassis router so the shell's
+// own <script src> and <link> targets resolve instead of falling through to the generic 501 below.
+// Protocol paths (/bridge, /srt, /ndi, /omt, /playout, /egress) stay hand-routed above this tail.
+const ACCENT_HEX = "#65bdff";
+const chassis = makeFetch(landingPage, markSvg(ACCENT_HEX), {
+    meta: {
+        product: "Bridge",
+        host: "bridge.wave.online",
+        tagline: "Translate SRT, NDI, Dante and OMT into one WAVE-native MoQ stream by dialing out — no inbound port.",
+        tokensCss: TOKENS_CSS,
+        accentHex: ACCENT_HEX,
+    },
+});
+const CHASSIS_PATHS = new Set(["/favicon.svg", "/favicon.ico", "/robots.txt"]);
 
 // CF Container Durable Object classes must be re-exported from the Worker entry so wrangler can bind them.
 // MoqContainer is LIVE; the egress-strand classes (#134) are INERT — their [[migrations]] new_sqlite_classes
@@ -18,8 +37,11 @@ import { landingPage } from "./landing";
 export { MoqContainer, SrtContainer, FfmpegContainer, NdiContainer, OmtContainer };
 
 export default {
-	async fetch(request: Request, env: BridgeEnv & MoqEnv): Promise<Response> {
+	async fetch(request: Request, env: BridgeEnv & MoqEnv, ctx?: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
+		if (url.pathname.startsWith("/_wave/") || CHASSIS_PATHS.has(url.pathname)) {
+			return chassis(request, env as unknown as Parameters<typeof chassis>[1], ctx);
+		}
 		if (url.pathname === "/" || url.pathname === "/index.html") {
 			return new Response(landingPage(), {
 				headers: {
