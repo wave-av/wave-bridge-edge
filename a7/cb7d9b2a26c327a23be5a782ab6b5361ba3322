@@ -1,0 +1,39 @@
+containers/ffmpeg/adapter/cmd/bridge/main.go
+  s_293affce3db927::t_2205b8b1390b56 22,53-60
+containers/ffmpeg/adapter/go.mod
+  s_293affce3db927::t_7e728af1b8dd66 3
+containers/ndi/Dockerfile
+  s_293affce3db927::t_006550427fcb43 27
+containers/ndi/adapter/cmd/bridge/main.go
+  s_293affce3db927::t_c6adf60b36b336 20,38-45
+containers/ndi/adapter/go.mod
+  s_293affce3db927::t_1d5464bf69fe53 3
+containers/omt/Dockerfile
+  s_293affce3db927::t_8025e81d339a3b 38
+containers/omt/adapter/cmd/bridge/main.go
+  s_293affce3db927::t_b4c9451b52fe24 16,34-41
+containers/omt/adapter/go.mod
+  s_293affce3db927::t_c23dad8f6d0787 3
+containers/srt/Dockerfile
+  s_293affce3db927::t_6ef23cbc172ffd 4
+containers/srt/adapter/cmd/bridge/main.go
+  s_293affce3db927::t_146b053663f144 19,37-44
+containers/srt/adapter/go.mod
+  s_293affce3db927::t_ca3e2325d89bce 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "a7cb7d9b2a26c327a23be5a782ab6b5361ba3322",
+  "prompts": {},
+  "sessions": {
+    "s_293affce3db927": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cad921ff-40f1-4f4f-90de-90328ad7a010",
+        "model": "unknown"
+      },
+      "human_author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
