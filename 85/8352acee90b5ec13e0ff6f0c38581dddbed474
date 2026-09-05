@@ -1,0 +1,21 @@
+test/chassis.spec.ts
+  s_4657dee555390b::t_22e5d045c825fd 28-30
+  s_4657dee555390b::t_7339d965305852 1,4
+  s_4657dee555390b::t_d5ef8c6cce9e8e 21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "858352acee90b5ec13e0ff6f0c38581dddbed474",
+  "prompts": {},
+  "sessions": {
+    "s_4657dee555390b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c714314b-1edf-4e54-a112-2a97f2377df1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
