@@ -1,7 +1,7 @@
 // wave-bridge-edge — chassis surface wiring (spoke-chassis 0.16.x funnel + nav account CTA).
 //
 // What these prove:
-//   (a) The landing shell carries the nav account CTA pair (Sign in / Get API key), the funnel marker,
+//   (a) The landing shell carries the nav account CTA pair (Sign in / Get an API key), the funnel marker,
 //       the canon accent only (#21BCE7 present, retired #00ccf9 absent) and the footer truth strip.
 //   (b) Every asset the shell references under /_wave/* is SERVED by this worker (consent.js, cta.js,
 //       nav.js) instead of falling through to the generic BRIDGE_NOT_IMPLEMENTED 501.
@@ -25,7 +25,7 @@ describe("landing shell — chassis 0.16 surfaces", () => {
 		const html = await res.text();
 		expect(html).toContain('href="https://console.wave.online/login"');
 		expect(html).toContain('href="https://console.wave.online/signup"');
-		expect(html).toContain("Get API key");
+		expect(html).toContain("Get an API key");
 		expect(html).toContain('<meta name="wave-funnel" content="1">');
 		expect(html.toLowerCase()).toContain("#21bce7");
 		expect(html.toLowerCase()).not.toContain("00ccf9");
