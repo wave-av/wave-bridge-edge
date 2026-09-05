@@ -17,7 +17,7 @@
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",
     "@wave-av/container-pool": "^0.1.0",
-    "@wave-av/spoke-chassis": "^0.19.1"
+    "@wave-av/spoke-chassis": "^0.19.3"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.16.10",
