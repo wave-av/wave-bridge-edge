@@ -8,6 +8,7 @@
 |---|---|---|---|
 | `CLOUDFLARE_API_TOKEN` | Worker deploys via wrangler-action | `deploy.yml` (env-aware: push main → `<proto>.wave.online`; push staging → `<proto>.staging.wave.online`) | Quarterly. Token scopes: Account · Workers Scripts: Edit, Workers KV Storage: Edit, Zone · Workers Routes: Edit. Mint at https://dash.cloudflare.com/profile/api-tokens |
 | `CLOUDFLARE_ACCOUNT_ID` | Helper for wrangler-action (some commands accept it via env) | `deploy.yml` | Never rotates (it's an ID, not a secret — kept secret-form for consistency) |
+| `CONFORMANCE_REPO_PAT` | Read-only cross-repo checkout of the private conformance harness for the advisory ffmpeg A/B bench. **Not yet provisioned** — `ffmpeg-bench.yml` no-ops until an operator sets it. | `ffmpeg-bench.yml` | Quarterly. Scope: fine-grained PAT (or GitHub App installation token) with **Contents: Read** on the single harness repo only. Set via `gh secret set CONFORMANCE_REPO_PAT -R wave-av/wave-bridge-edge` |
 
 > 🚧 **Long-term:** these tokens will be replaced by Doppler→GH sync with auto-rotation (wave-foundation task #111). Until then, set a calendar reminder for the next rotation.
 
