@@ -94,6 +94,21 @@ export function resolveDeployHost(tomlSrc, envName) {
   return null;
 }
 
+/** Strip a trailing `# comment` from a TOML line, respecting simple double-quoted strings (a `#`
+ *  inside quotes is data, not a comment start). Not a full TOML parser — this repo's route lines
+ *  never contain an escaped quote or a `#` inside a pattern string, and this is only relied on to
+ *  keep hasDeclaredRoute() (below) from misreading `routes = [] # ...` as a non-empty (declared)
+ *  value (same class of gap coderabbitai caught in wave-realtime-edge#487's sibling resolver). */
+function stripTrailingComment(line) {
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"' && line[i - 1] !== "\\") inQuotes = !inQuotes;
+    else if (ch === "#" && !inQuotes) return line.slice(0, i);
+  }
+  return line;
+}
+
 /** Pure: true if a `routes`/`route` key with a NON-EMPTY value is declared in envName's OWN
  *  scope — mirrors resolveDeployHost()'s exact scoping: the `[env.<envName>]` section (and its
  *  live subsections) when the file declares ANY `[env.*]` section, else (single-config spokes
@@ -108,6 +123,10 @@ export function hasDeclaredRoute(tomlSrc, envName) {
   const lines = tomlSrc.split("\n");
   const sectionHeader = `[env.${envName}]`;
   const subsectionPrefix = `[env.${envName}.`;
+  // `line` here is ALREADY comment-stripped (via stripTrailingComment, applied by the loop below)
+  // so a trailing `# ...` on e.g. `routes = [] # deliberately empty` can never masquerade as part
+  // of the value and misclassify a deliberate empty declaration as non-empty (same class of gap
+  // coderabbitai caught in wave-realtime-edge#487's sibling resolver).
   const isRouteKeyLine = (line) => {
     const m = /^(routes|route)\s*=\s*(.*)$/.exec(line);
     if (!m) return false;
@@ -120,8 +139,8 @@ export function hasDeclaredRoute(tomlSrc, envName) {
   let declaredInSection = false;
   let declaredTopLevel = false;
   for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (line.startsWith("#")) continue;
+    const line = stripTrailingComment(rawLine).trim();
+    if (line === "") continue;
     if (line.startsWith("[env.")) sawEnvHeader = true;
     if (line === sectionHeader) {
       inSection = true;

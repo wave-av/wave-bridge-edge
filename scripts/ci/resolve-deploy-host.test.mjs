@@ -202,6 +202,32 @@ test("hasDeclaredRoute ignores commented-out route mentions (prose and fully-com
   assert.equal(hasDeclaredRoute(toml, "production"), false);
 });
 
+test("resolves a MULTILINE top-level routes array — a cosmetic reformat (not a config regression) must not fail closed (coderabbitai review, wave-realtime-edge#487, same class of gap in this repo's sibling resolver)", () => {
+  const toml = `
+routes = [
+  { pattern = "bridge.wave.online/health", zone_name = "wave.online" }
+]
+`;
+  assert.equal(resolveDeployHost(toml, "production"), "bridge.wave.online");
+  assert.deepEqual(resolveExitCode(toml, "production"), { host: "bridge.wave.online", exitCode: 0 });
+});
+
+test("STATE 3 (nothing declared, exit 2): a trailing inline comment on an empty top-level routes declaration must NOT be misread as a non-empty value (coderabbitai review, wave-realtime-edge#487)", () => {
+  const toml = `routes = [] # deliberately empty\n`;
+  assert.equal(hasDeclaredRoute(toml, "production"), false);
+  assert.deepEqual(resolveExitCode(toml, "production"), { host: null, exitCode: 2 });
+});
+
+test("STATE 3 (nothing declared, exit 2): a trailing inline comment on an empty [env.production] routes declaration must NOT be misread as a non-empty value", () => {
+  const toml = `[env.production]\nroutes = [] # deliberately empty\n`;
+  assert.equal(hasDeclaredRoute(toml, "production"), false);
+});
+
+test("a trailing inline comment on a RESOLVED route does not break host extraction", () => {
+  const toml = `routes = [{ pattern = "bridge.wave.online/health", zone_name = "wave.online" }] # health route\n`;
+  assert.equal(resolveDeployHost(toml, "production"), "bridge.wave.online");
+});
+
 test("resolveExitCode STATE 1: resolved (this repo's actual top-level shape) — exit 0 with the hostname", () => {
   const toml = `routes = [{ pattern = "bridge.wave.online/health", zone_name = "wave.online" }]\n`;
   assert.deepEqual(resolveExitCode(toml, "production"), { host: "bridge.wave.online", exitCode: 0 });
