@@ -80,8 +80,17 @@ jobs:
 
       # Proven-live gate (proven-live-or-not-done): a green `wrangler deploy` only proves the API
       # call succeeded, not that the right bundle is answering live traffic. This step is the
-      # receipt. Skips (notices, does not fail) when the resolved env has no live route configured
-      # in wrangler.toml.
+      # receipt.
+      #
+      # Absence must never read as a pass (measured on wave-email-edge deploy run 33994760933,
+      # 2026-09-05: resolve-deploy-host.mjs didn't understand a TOML shape it doesn't parse, so it
+      # printed nothing for a PRODUCTION deploy with a perfectly live route, and this step quietly
+      # exited 0 — the worker was live and correct, but the gate proved nothing). A missing route
+      # for a dispatched PRODUCTION deploy is now a hard `::error` + exit 1: production always has
+      # a route once it's routable, so "no route" here means the resolver regressed or the toml
+      # regressed, not a legitimate skip. This repo's TARGET_ENV is always the literal `production`
+      # (there is no staging deploy path in this workflow), so this branch fires unconditionally —
+      # which is correct: every deploy this job runs IS a production deploy.
       - name: post-deploy verify — proven live, not merely deployed
         if: steps.gate.outputs.deploy == 'true'
         env:
@@ -91,6 +100,10 @@ jobs:
           set -e
           HOST=$(node scripts/ci/resolve-deploy-host.mjs "$TARGET_ENV" || true)
           if [ -z "$HOST" ]; then
+            if [ "$TARGET_ENV" = "production" ]; then
+              echo "::error::no route resolved for env 'production' in wrangler.toml after a live production deploy — refusing to silently skip the proven-live gate. Either the wrangler.toml route/routes block is missing or resolve-deploy-host.mjs failed to parse it (check for a new TOML shape it doesn't recognise). A production deploy with an unverifiable route is a FAILURE, not a pass."
+              exit 1
+            fi
             echo "::notice::no route configured for env '$TARGET_ENV' in wrangler.toml — skipping live verification"
             exit 0
           fi
