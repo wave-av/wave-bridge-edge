@@ -32,3 +32,10 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: test
         run: npm test
+      - name: test (scripts/ci/*.test.mjs — node:test, NOT globbed by vitest's test/**/*.spec.ts include)
+        # vitest.config.ts scopes `include` to `test/**/*.spec.ts` only, so a node:test-based suite
+        # living under scripts/ci/ (e.g. resolve-deploy-host.test.mjs) is invisible to `npm test`
+        # above and would otherwise never run in ANY CI job — the same "test exists but no job
+        # executes it" gap flagged in wave-docs-www's test:gen glob. This step is the fix: run it
+        # explicitly via node's own test runner.
+        run: npm run test:ci-scripts

@@ -109,6 +109,45 @@ function stripTrailingComment(line) {
   return line;
 }
 
+/** Pure: given the (already comment-stripped, trimmed) right-hand side of a `routes = ` /
+ *  `route = ` key on line `allLines[index]`, decide whether the value it introduces is EMPTY — a
+ *  same-line `[]` / `{}`, or a MULTILINE array/inline-table whose brackets contain nothing but
+ *  blank lines and comments before they close (e.g. `routes = [\n]`, a cosmetic reformat of
+ *  `routes = []` — the exact shape a `prettier`/manual reflow produces and the bug this function
+ *  replaces could not see: the old `rhs !== "" && rhs !== "[]" && rhs !== "{}"` check only ever
+ *  looked at the key's OWN line, so a multiline-empty array's rhs was the bare, unbalanced `"["`
+ *  — a fourth string matching none of the three sentinels — and the key was misread as non-empty,
+ *  i.e. "declared", turning a legitimate exit-2 skip into a false exit-1 fail-closed).
+ *
+ *  Deliberately conservative rather than a fourth literal sentinel: this tracks BRACKET DEPTH
+ *  across as many continuation lines as it takes to close, so it is correct regardless of how
+ *  many lines the empty array/table is split across, not just one extra shape. ANY non-bracket,
+ *  non-whitespace content between the opening and closing bracket — on the key's own line or a
+ *  continuation line — counts as non-empty, matching how the `pattern = "..."` regex in
+ *  resolveDeployHost() would find a real route inside that same span. */
+function isRouteValueEmpty(rhs, allLines, index) {
+  const bracketDelta = (s) => {
+    let delta = 0;
+    for (const ch of s) {
+      if (ch === "[" || ch === "{") delta++;
+      else if (ch === "]" || ch === "}") delta--;
+    }
+    return delta;
+  };
+  const hasContent = (s) => s.replace(/[[\]{}]/g, "").trim() !== "";
+  if (hasContent(rhs)) return false; // real content already on the key's own line
+  let depth = bracketDelta(rhs);
+  if (depth <= 0) return true; // "[]" / "{}" / bare "" — already balanced (or never opened): empty
+  for (let i = index + 1; i < allLines.length; i++) {
+    const next = stripTrailingComment(allLines[i]).trim();
+    if (next === "") continue; // blank/fully-commented continuation line: keep looking
+    if (hasContent(next)) return false; // real content on a continuation line
+    depth += bracketDelta(next);
+    if (depth <= 0) return true; // closed with nothing but brackets/whitespace in between
+  }
+  return true; // ran off the end without closing — no content was ever found, so not "declared"
+}
+
 /** Pure: true if a `routes`/`route` key with a NON-EMPTY value is declared in envName's OWN
  *  scope — mirrors resolveDeployHost()'s exact scoping: the `[env.<envName>]` section (and its
  *  live subsections) when the file declares ANY `[env.*]` section, else (single-config spokes
@@ -117,29 +156,30 @@ function stripTrailingComment(line) {
  *  1, must fail closed) and "nothing is declared for THIS env" (exit 2, safe to skip) — matching
  *  resolveDeployHost()'s own scope exactly is what keeps this from wrongly reading, say, a
  *  DIFFERENT env's route (or a route that a later `[table]` silently absorbed) as "declared here".
- *  An empty declaration (`routes = []`, `route = {}`, or a bare key with nothing after it) counts
- *  as NOT declared — the same "nothing to verify" state as the key being absent entirely. */
+ *  An empty declaration (`routes = []`, `route = {}`, a bare key with nothing after it, or the
+ *  same split across multiple lines) counts as NOT declared — the same "nothing to verify" state
+ *  as the key being absent entirely; see isRouteValueEmpty() above for the multiline case this
+ *  used to get wrong. */
 export function hasDeclaredRoute(tomlSrc, envName) {
   const lines = tomlSrc.split("\n");
   const sectionHeader = `[env.${envName}]`;
   const subsectionPrefix = `[env.${envName}.`;
-  // `line` here is ALREADY comment-stripped (via stripTrailingComment, applied by the loop below)
-  // so a trailing `# ...` on e.g. `routes = [] # deliberately empty` can never masquerade as part
-  // of the value and misclassify a deliberate empty declaration as non-empty (same class of gap
-  // coderabbitai caught in wave-realtime-edge#487's sibling resolver).
-  const isRouteKeyLine = (line) => {
+  // `allLines`/`index` are threaded through so isRouteKeyLine() can look ahead across a multiline
+  // `routes = [ ... ]` value via isRouteValueEmpty() above — resolveDeployHost() never needs this,
+  // it only ever matches a `pattern = "..."` that must live entirely on one line.
+  const isRouteKeyLine = (allLines, index) => {
+    const line = stripTrailingComment(allLines[index]).trim();
     const m = /^(routes|route)\s*=\s*(.*)$/.exec(line);
     if (!m) return false;
-    const rhs = m[2].trim();
-    return rhs !== "" && rhs !== "[]" && rhs !== "{}";
+    return !isRouteValueEmpty(m[2].trim(), allLines, index);
   };
   let inSection = false;
   let sawEnvHeader = false;
   let inAnyTable = false;
   let declaredInSection = false;
   let declaredTopLevel = false;
-  for (const rawLine of lines) {
-    const line = stripTrailingComment(rawLine).trim();
+  for (let i = 0; i < lines.length; i++) {
+    const line = stripTrailingComment(lines[i]).trim();
     if (line === "") continue;
     if (line.startsWith("[env.")) sawEnvHeader = true;
     if (line === sectionHeader) {
@@ -151,14 +191,14 @@ export function hasDeclaredRoute(tomlSrc, envName) {
       continue;
     }
     if (inSection) {
-      if (isRouteKeyLine(line)) declaredInSection = true;
+      if (isRouteKeyLine(lines, i)) declaredInSection = true;
       continue;
     }
     if (line.startsWith("[")) {
       inAnyTable = true;
       continue;
     }
-    if (!inAnyTable && isRouteKeyLine(line)) declaredTopLevel = true;
+    if (!inAnyTable && isRouteKeyLine(lines, i)) declaredTopLevel = true;
   }
   if (declaredInSection) return true;
   if (!sawEnvHeader && envName === "production" && declaredTopLevel) return true;
