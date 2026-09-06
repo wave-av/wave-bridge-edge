@@ -24,7 +24,7 @@
 # wave-av/wave-ndi-edge → containers/ndi/LICENSING.md; reference implementation in wave-av/wave-ndi.
 # NDI® is a registered trademark of Vizrt NDI AB — https://ndi.video
 
-FROM golang:1.26-bookworm AS builder
+FROM golang:1.27-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential pkg-config ca-certificates \
     && rm -rf /var/lib/apt/lists/*
