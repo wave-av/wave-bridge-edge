@@ -1,0 +1,272 @@
+name: ffmpeg-bench
+
+# ADVISORY A/B benchmark gate for FFmpeg container changes.
+#
+# Wired per governance/plans/ffmpeg9-lei/E3-MEASURE.md P4 (wave-conformance#49): the P2/P3 work
+# established that this repo's runners show enough host-noise variance (Welch p=0.92 on a control
+# arm) that a strict pass/fail threshold on N=3 CI-runner samples would be indistinguishable from
+# scheduling luck. This job is ADVISORY ONLY in v1 — it posts medians+spread for a human to read,
+# it does not block merge. A future revision may add a threshold once a noise-floor baseline has
+# been established on THIS runner class specifically (see E3-P3 "no-claim" verdicts).
+#
+# The benchmark harness (media-ab-ffmpeg9.mjs) lives in the PRIVATE wave-conformance repo and is
+# consumed here ONLY via an authenticated cross-repo checkout — never vendored/copied/paraphrased
+# into this public repo. If CONFORMANCE_REPO_PAT is not provisioned, this job no-ops harmlessly.
+
+on:
+  pull_request:
+    paths:
+      # Only containers/ffmpeg/**: that is the only image this workflow builds and benchmarks.
+      # containers/srt/egress/** builds its own independent ffmpeg (n8.1.1 + libsrt) and is NOT
+      # covered by the media-ab-ffmpeg9 harness; triggering on it would A/B two identical images.
+      - "containers/ffmpeg/**"
+  push:
+    # Cache-warming only (see warm-baseline-cache). GHA cache entries written on a
+    # pull_request run are scoped to that PR's ref, so PR runs can never warm each
+    # other; only entries written on the base branch are readable by every PR.
+    branches: [main]
+    paths:
+      - "containers/ffmpeg/**"
+
+# Default read-only; the `bench` job alone elevates to pull-requests: write for its
+# advisory comment, so check-secret (and anything added later) stays least-privilege.
+permissions:
+  contents: read
+
+concurrency:
+  group: ffmpeg-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  warm-baseline-cache:
+    # Runs on push to main only: builds the current main recipe and writes its layers
+    # into the ffmpeg-bench-baseline GHA cache scope, which base-branch cache entries
+    # make readable from every PR run. Without this the baseline arm builds cold once
+    # per PR, because PR-run cache writes are scoped to that PR's own ref.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: build ffmpeg image (cache-warm only, image discarded)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: containers/ffmpeg
+          file: containers/ffmpeg/Dockerfile
+          cache-from: type=gha,scope=ffmpeg-bench-baseline
+          cache-to: type=gha,mode=max,scope=ffmpeg-bench-baseline
+
+  check-secret:
+    # `secrets` is not a valid context for a job-level `if` (only github/needs/vars/inputs are),
+    # so whether CONFORMANCE_REPO_PAT is provisioned is resolved here in a step and passed to the
+    # real job via an output — this is what lets `bench` no-op harmlessly pre-provisioning.
+    # pull_request only: push-to-main runs are cache-warming and never bench (skipping this
+    # job also skips `bench`, which `needs` it).
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      has_token: ${{ steps.check.outputs.has_token }}
+    steps:
+      - id: check
+        env:
+          TOKEN: ${{ secrets.CONFORMANCE_REPO_PAT }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  bench:
+    # Gated: no-ops harmlessly until CONFORMANCE_REPO_PAT is provisioned (a fine-grained PAT or
+    # GitHub App installation token scoped to read wave-av/wave-conformance). Do not invent a
+    # secret here — this `if` is what keeps the job from failing when it isn't provisioned yet.
+    needs: check-secret
+    if: needs.check-secret.outputs.has_token == 'true'
+    runs-on: ubuntu-latest
+    # containers/ffmpeg compiles AVM + ffmpeg from source, twice (PR arm + baseline arm).
+    # Cold-cache that is well over 30 minutes on a hosted runner; the GHA BuildKit cache
+    # below makes warm runs much faster, but the cap must cover a cold build of both arms.
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      pull-requests: write # for the advisory `gh pr comment` step only
+    steps:
+      # persist-credentials: false on every checkout (repo convention, see _checks.yml).
+      # It matters most for the harness checkout: without it CONFORMANCE_REPO_PAT is
+      # written into wave-conformance/.git/config and sits in the workspace while
+      # PR-authored content (the Dockerfile) is built and executed later in this job.
+      - name: checkout bridge-edge (PR head)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          path: bridge-edge
+          persist-credentials: false
+
+      - name: checkout bridge-edge (PR base, for baseline recipe)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # The merge target's recipe, not a hard-coded `main`: PRs aimed at release/hotfix
+          # branches must be measured against the baseline they would actually change.
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: bridge-edge-base
+          persist-credentials: false
+
+      - name: checkout wave-conformance harness (private, cross-repo)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: wave-av/wave-conformance
+          # SHA-pinned (main as of 2026-08-05) so reruns execute identical harness code;
+          # bump deliberately when the harness changes, same as this workflow's action pins.
+          ref: 15bf454b2b391f973f3e671745daf18a10ae2d72
+          token: ${{ secrets.CONFORMANCE_REPO_PAT }}
+          path: wave-conformance
+          persist-credentials: false
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+
+      - name: install harness dependencies (if it has any)
+        working-directory: wave-conformance
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          fi
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      # A PR can ADD, DELETE, or relocate the ffmpeg recipe (the paths filter matches all
+      # three), so the recipe must exist in BOTH arms for an A/B to make sense. Otherwise
+      # the builds and harness are skipped and the summary says which arm is missing,
+      # instead of docker erroring out on a missing build context.
+      - name: check recipe exists in both arms
+        id: recipe
+        run: |
+          head_exists=false
+          base_exists=false
+          if [ -f bridge-edge/containers/ffmpeg/Dockerfile ]; then head_exists=true; fi
+          if [ -f bridge-edge-base/containers/ffmpeg/Dockerfile ]; then base_exists=true; fi
+          run_bench=false
+          if [ "$head_exists" = "true" ] && [ "$base_exists" = "true" ]; then run_bench=true; fi
+          {
+            echo "head_exists=$head_exists"
+            echo "base_exists=$base_exists"
+            echo "run_bench=$run_bench"
+          } >> "$GITHUB_OUTPUT"
+
+      # BuildKit layer cache persisted in the GHA cache backend. Scoping caveat: cache
+      # entries a PR run writes are readable only by reruns/pushes of that same PR;
+      # cross-PR reuse comes exclusively from the ffmpeg-bench-baseline entries that
+      # warm-baseline-cache writes on pushes to main. Separate scopes per arm so
+      # PR-recipe layers never evict baseline layers; the PR arm additionally seeds
+      # from the baseline scope since the recipes usually share most layers.
+      # `load: true` puts each image in the local docker daemon for the harness to run.
+      - name: build PR ffmpeg image
+        if: steps.recipe.outputs.run_bench == 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: bridge-edge/containers/ffmpeg
+          file: bridge-edge/containers/ffmpeg/Dockerfile
+          tags: ffmpeg-bench:pr
+          load: true
+          cache-from: |
+            type=gha,scope=ffmpeg-bench-pr
+            type=gha,scope=ffmpeg-bench-baseline
+          cache-to: type=gha,mode=max,scope=ffmpeg-bench-pr
+
+      - name: build base-recipe baseline ffmpeg image
+        if: steps.recipe.outputs.run_bench == 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: bridge-edge-base/containers/ffmpeg
+          file: bridge-edge-base/containers/ffmpeg/Dockerfile
+          tags: ffmpeg-bench:baseline
+          load: true
+          cache-from: type=gha,scope=ffmpeg-bench-baseline
+          cache-to: type=gha,mode=max,scope=ffmpeg-bench-baseline
+
+      - name: run smoke A/B subset (N=3)
+        if: steps.recipe.outputs.run_bench == 'true'
+        # ADVISORY: a harness error must not paint the check red (the summary step
+        # below already reports the missing-result case for a human to look into).
+        continue-on-error: true
+        working-directory: wave-conformance
+        run: |
+          node media-ab-ffmpeg9.mjs \
+            --arm-a-image ffmpeg-bench:baseline \
+            --arm-b-image ffmpeg-bench:pr \
+            --runs 3 \
+            --subset smoke \
+            --out "$GITHUB_WORKSPACE/bench-result.json"
+
+      - name: write advisory summary
+        # !cancelled(): still report after a failed build step, but a run superseded by
+        # cancel-in-progress must not post a meaningless "no result file" body.
+        if: ${{ !cancelled() }}
+        env:
+          HEAD_EXISTS: ${{ steps.recipe.outputs.head_exists }}
+          BASE_EXISTS: ${{ steps.recipe.outputs.base_exists }}
+        run: |
+          # Built into a regular file first: GITHUB_STEP_SUMMARY is a fresh per-step temp file,
+          # so the PR-comment step below could never read what this step appended to it. One
+          # shared file feeds both the job summary and the PR comment body.
+          {
+            echo "## ffmpeg A/B bench — ADVISORY (no pass/fail threshold in v1)"
+            echo
+            echo "N=3 smoke subset. Reported as medians + spread only — this repo's CI runners"
+            echo "show enough host-noise variance (see wave-conformance#49 / E3-P3: a control-arm"
+            echo "Welch test on N=5 came back p=0.92) that a hard threshold on N=3 would be"
+            echo "indistinguishable from scheduling luck. Read the numbers; don't auto-gate on them."
+            echo
+            # Empty flags mean the recipe check never ran (an earlier setup step failed) —
+            # that must not be reported as a definitive "nothing to compare" verdict.
+            if [ -z "$BASE_EXISTS" ] || [ -z "$HEAD_EXISTS" ]; then
+              echo "_bench setup did not complete (recipe check never ran) — see job logs._"
+            elif [ "$BASE_EXISTS" != "true" ]; then
+              echo "_no baseline: the merge target has no containers/ffmpeg/Dockerfile (recipe is"
+              echo "newly added or relocated by this PR), so there is nothing to A/B against._"
+            elif [ "$HEAD_EXISTS" != "true" ]; then
+              echo "_no PR arm: this PR removes or relocates containers/ffmpeg/Dockerfile, so"
+              echo "there is nothing to A/B against._"
+            elif [ -f "$GITHUB_WORKSPACE/bench-result.json" ]; then
+              echo '```json'
+              cat "$GITHUB_WORKSPACE/bench-result.json"
+              echo '```'
+            else
+              echo "_no result file produced — harness run may have failed; see job logs._"
+            fi
+          } > "$GITHUB_WORKSPACE/bench-summary.md"
+          cat "$GITHUB_WORKSPACE/bench-summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: post advisory PR comment (sticky)
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          MARKER: "<!-- ffmpeg-bench-advisory -->"
+        run: |
+          # Sticky: one advisory comment per PR, edited in place on each run (identified
+          # by a hidden marker) instead of appending a new comment on every push.
+          if [ ! -s "$GITHUB_WORKSPACE/bench-summary.md" ]; then
+            exit 0
+          fi
+          { echo "$MARKER"; echo; cat "$GITHUB_WORKSPACE/bench-summary.md"; } > "$GITHUB_WORKSPACE/bench-comment.md"
+          # Capture the full listing before taking the first line: piping --paginate
+          # straight into `head -n1` can SIGPIPE gh mid-fetch, and with pipefail that
+          # exit 141 would fail this advisory step. `|| true` also tolerates a flaky
+          # listing call — worst case a fresh comment is posted instead of an edit.
+          all_ids="$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" || true)"
+          existing_id="$(printf '%s\n' "$all_ids" | head -n1)"
+          if [ -n "$existing_id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$existing_id" \
+              -F "body=@$GITHUB_WORKSPACE/bench-comment.md" || true
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$GITHUB_WORKSPACE/bench-comment.md" || true
+          fi
