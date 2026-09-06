@@ -1,0 +1,71 @@
+# SPIKE image — FFMPEG9-LEI E4-P1 capability spike.
+#
+# Proves FFmpeg 9.0's ONNX Runtime DNN backend (--enable-libonnxruntime) builds
+# and runs. This is NOT the production Dockerfile (see ./Dockerfile) — it does
+# not destabilize PR #150. Trimmed for spike speed: keeps x264 + webp, drops
+# the AV2/AVM stage entirely (not needed to prove the ONNX backend).
+#
+# Receipts (R13, manual probe — onnxruntime has no Debian package, no
+# pkg-config file):
+#   - configure flag: --enable-libonnxruntime
+#   - probed via: onnxruntime_c_api.h header, OrtGetApiBase symbol, -lonnxruntime
+#   - GPU vs CPU is a RUNTIME option (dnn_backend=onnx, default device=cpu),
+#     not a build-time/container-variant decision — a CPU-only container is a
+#     valid P1 spike target.
+#   - onnxruntime installed from Microsoft's prebuilt linux-aarch64 release
+#     tarball (github.com/microsoft/onnxruntime releases), NOT apt.
+
+FROM debian:trixie-slim AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake meson nasm pkg-config \
+    git ca-certificates curl \
+    libdav1d-dev \
+    libx264-dev \
+    libwebp-dev \
+    libssl-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ONNX Runtime prebuilt release (Microsoft) — linux-aarch64, matches local
+# docker (arm64). sha256 noted below from the published GitHub release asset.
+ARG ONNXRUNTIME_VERSION=1.28.0
+ARG ONNXRUNTIME_TARBALL=onnxruntime-linux-aarch64-${ONNXRUNTIME_VERSION}.tgz
+ARG ONNXRUNTIME_URL=https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/${ONNXRUNTIME_TARBALL}
+RUN curl -fsSL -o /tmp/onnxruntime.tgz "${ONNXRUNTIME_URL}" \
+    && sha256sum /tmp/onnxruntime.tgz | tee /tmp/onnxruntime.sha256 \
+    && mkdir -p /tmp/onnxruntime \
+    && tar -xzf /tmp/onnxruntime.tgz -C /tmp/onnxruntime --strip-components=1 \
+    && cp -r /tmp/onnxruntime/include/* /usr/local/include/ \
+    && cp -r /tmp/onnxruntime/lib/* /usr/local/lib/ \
+    && ldconfig \
+    && rm -rf /tmp/onnxruntime /tmp/onnxruntime.tgz
+
+# ffmpeg 9.0 — CPU-only ONNX Runtime DNN backend spike.
+ARG FFMPEG_VERSION=n9.0
+RUN git clone --depth=1 --branch=${FFMPEG_VERSION} https://git.ffmpeg.org/ffmpeg.git /build/ffmpeg \
+    && cd /build/ffmpeg \
+    && ./configure \
+        --prefix=/usr/local \
+        --enable-gpl --enable-version3 --enable-nonfree \
+        --enable-libdav1d \
+        --enable-libx264 \
+        --enable-libwebp \
+        --enable-openssl \
+        --enable-libonnxruntime \
+        --extra-cflags="-I/usr/local/include" \
+        --extra-ldflags="-L/usr/local/lib" \
+    && make -j$(nproc) && make install \
+    && ldconfig
+
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libdav1d7 \
+    libx264-164 \
+    libwebp7 libwebpmux3 libwebpdemux2 \
+    libssl3t64 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /usr/local/lib/ /usr/local/lib/
+COPY --from=builder /usr/local/bin/ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
+RUN ldconfig
+EXPOSE 8080/tcp
+ENTRYPOINT ["/usr/local/bin/ffmpeg"]
