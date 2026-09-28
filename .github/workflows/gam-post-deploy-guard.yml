@@ -1,0 +1,153 @@
+# GAM post-deploy guard — release safety: progressive, reversible, automatically-stopped releases.
+#
+# THE GAP THIS CLOSES: deploy.yml's own "post-deploy verify" step already proves the right bundle
+# is live (a sha match on /health) — but its only action on failure is `exit 1`. `wrangler deploy`
+# runs BEFORE that verify step, so a failing verify fails the WORKFLOW while the wrong bundle keeps
+# serving 100% of production traffic. This workflow is the brake: it independently re-probes
+# production after deploy.yml completes and, on a regressed or unevaluable verdict, re-dispatches
+# deploy.yml at the last commit a prior run of the same workflow PROVED live.
+#
+# THIS REPO HAD NO GUARD AT ALL (REL-003 defect record, 2026-09-28) — this is new, ported from the
+# fixed version of wave-moq-edge's gam-post-deploy-guard.yml (that repo's original guard shipped
+# inert AND broken: a whitespace-sensitive marker that could never match a live pretty-printed
+# /health body, a rollback dispatch that tried to pass a commit SHA as a workflow_dispatch `ref`
+# — which the GitHub API rejects — and a prior-good resolver with no branch filter). All three
+# fixes are already applied here; see resolve-prior-good-sha.mjs and deploy.yml's `sha` input.
+#
+# INERT BY DEFAULT: gated behind repo variable GAM_ROLLBACK_ENABLED. Until an operator sets it to
+# '1' (a repo-variable write this PR deliberately does NOT make), this workflow runs and no-ops
+# green on every trigger. Merging this PR changes no live behavior.
+#
+# ALSO BLOCKED TODAY ON A SEPARATE GAP: this repo's CI deploy is currently a no-op because
+# CLOUDFLARE_API_TOKEN is not provisioned at repo or org scope (token gate in deploy.yml skips
+# both deploy and verify). Wiring this guard does not fix that — an operator must add the secret
+# before ANY of deploy.yml's CD path, including this guard, can act on live traffic.
+name: gam-post-deploy-guard
+
+on:
+  workflow_run:
+    workflows: ["deploy"]
+    types: [completed]
+  workflow_dispatch: {}   # manual trigger so the guard can be dogfooded on demand
+
+permissions: {}
+
+concurrency:
+  group: gam-post-deploy-guard-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  canary-guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write   # re-dispatch deploy.yml on rollback via gh
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: kill-switch (read FIRST)
+        id: killswitch
+        env:
+          GAM_ROLLBACK_ENABLED: ${{ vars.GAM_ROLLBACK_ENABLED }}
+        run: |
+          set -euo pipefail
+          if [ "${GAM_ROLLBACK_ENABLED:-0}" != "1" ]; then
+            echo "GAM_ROLLBACK_ENABLED='${GAM_ROLLBACK_ENABLED:-unset}' (≠ 1) — GAM guard is OFF. No-op." >> "$GITHUB_STEP_SUMMARY"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Checked out BEFORE "resolve target sha + run id" (moved up from after it, REL-003 fix
+      # 2026-09-28) because that step now needs resolve-dispatch-sha.mjs from this checkout to
+      # correctly resolve a workflow_dispatch (rollback) run's sha — see that step's comment.
+      # Only gated on the kill-switch (not yet on branch/conclusion, which that step still checks)
+      # — a harmless few extra seconds of checkout on a conclusion we're about to no-op on.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        if: steps.killswitch.outputs.enabled == 'true'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        if: steps.killswitch.outputs.enabled == 'true'
+        with:
+          node-version: '22'
+
+      - name: resolve target sha + run id
+        id: target
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+          WR_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          WR_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WR_RUN_ID: ${{ github.event.workflow_run.id }}
+          WR_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WR_DISPLAY_TITLE: ${{ github.event.workflow_run.display_title }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT}" = "workflow_run" ]; then
+            case "${WR_CONCLUSION}" in
+              cancelled|skipped)
+                echo "upstream deploy conclusion='${WR_CONCLUSION}' — nothing to canary." >> "$GITHUB_STEP_SUMMARY"
+                echo "proceed=false" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+            esac
+            if [ "${WR_HEAD_BRANCH}" != "main" ]; then
+              echo "upstream deploy branch='${WR_HEAD_BRANCH}' is not main — this guard is production-only." >> "$GITHUB_STEP_SUMMARY"
+              echo "proceed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            # WR_HEAD_SHA reports the DISPATCHED REF's tip for a workflow_dispatch run (standard
+            # GitHub Actions semantics), NEVER the `sha` input actually checked out and deployed.
+            # Every GAM rollback dispatches `deploy.yml --ref main -f sha="${PRIOR_SHA}"`, so
+            # trusting head_sha here would key the canary's expect-marker off main's CURRENT tip
+            # (which, right after a bad commit lands, IS the regressed commit) instead of the
+            # commit the rollback run actually deployed — causing the guard to see the correctly
+            # rolled-back-to commit live, call it "regressed" again, and re-trigger rollback in a
+            # cascade (REL-003 fix, 2026-09-28; see resolve-dispatch-sha.mjs and deploy.yml's
+            # `run-name`, which stamps the sha this reads back out of display_title).
+            SHA="$(node .github/actions/gam-canary-rollback/resolve-dispatch-sha.mjs "${WR_DISPLAY_TITLE}" "${WR_HEAD_SHA}")"
+            RUN_ID="${WR_RUN_ID}"
+          else
+            SHA="${GITHUB_SHA}"
+            RUN_ID=""
+          fi
+          {
+            echo "sha=${SHA}"
+            echo "run_id=${RUN_ID}"
+            echo "proceed=true"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: resolve production host from wrangler.toml
+        id: host
+        if: steps.killswitch.outputs.enabled == 'true' && steps.target.outputs.proceed == 'true'
+        run: |
+          set -euo pipefail
+          HOST="$(node scripts/ci/resolve-deploy-host.mjs production)"
+          if [ -z "$HOST" ]; then
+            echo "::error::resolve-deploy-host.mjs returned no host for production — refusing to guard with no target"
+            exit 1
+          fi
+          echo "host=${HOST}" >> "$GITHUB_OUTPUT"
+
+      # 3-state: healthy / regressed / refuse — refuse (no determinate answer) is treated
+      # identically to regressed, never as healthy.
+      - name: canary — /health sha match
+        if: steps.killswitch.outputs.enabled == 'true' && steps.target.outputs.proceed == 'true'
+        uses: ./.github/actions/gam-canary-rollback
+        with:
+          canary-url: 'https://${{ steps.host.outputs.host }}/health'
+          # Match the raw sha VALUE, not a hand-built `"sha":"<sha>"` JSON key/value substring — a
+          # pretty-printed /health body (space after the colon) would never match that shape (see
+          # wave-moq-edge's identical bug, fixed here from the start). A 7-40 char lowercase-hex
+          # commit SHA is specific enough on its own for a small health-check JSON body.
+          expect-marker: '${{ steps.target.outputs.sha }}'
+          expect-status: '200'
+          max-attempts: '6'
+          retry-delay-ms: '10000'
+          rollback-command: >
+            PRIOR_SHA="$(node .github/actions/gam-canary-rollback/resolve-prior-good-sha.mjs
+            "${GITHUB_REPOSITORY}" deploy.yml "${{ steps.target.outputs.run_id }}" main)" &&
+            echo "rolling back wave-bridge-edge to ${PRIOR_SHA}" &&
+            gh workflow run deploy.yml --repo "${GITHUB_REPOSITORY}" --ref main
+            -f sha="${PRIOR_SHA}"
