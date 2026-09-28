@@ -58,6 +58,20 @@ jobs:
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Checked out BEFORE "resolve target sha + run id" (moved up from after it, REL-003 fix
+      # 2026-09-28) because that step now needs resolve-dispatch-sha.mjs from this checkout to
+      # correctly resolve a workflow_dispatch (rollback) run's sha — see that step's comment.
+      # Only gated on the kill-switch (not yet on branch/conclusion, which that step still checks)
+      # — a harmless few extra seconds of checkout on a conclusion we're about to no-op on.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        if: steps.killswitch.outputs.enabled == 'true'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        if: steps.killswitch.outputs.enabled == 'true'
+        with:
+          node-version: '22'
+
       - name: resolve target sha + run id
         id: target
         if: steps.killswitch.outputs.enabled == 'true'
@@ -67,6 +81,7 @@ jobs:
           WR_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           WR_RUN_ID: ${{ github.event.workflow_run.id }}
           WR_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WR_DISPLAY_TITLE: ${{ github.event.workflow_run.display_title }}
         run: |
           set -euo pipefail
           if [ "${EVENT}" = "workflow_run" ]; then
@@ -82,7 +97,16 @@ jobs:
               echo "proceed=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            SHA="${WR_HEAD_SHA}"
+            # WR_HEAD_SHA reports the DISPATCHED REF's tip for a workflow_dispatch run (standard
+            # GitHub Actions semantics), NEVER the `sha` input actually checked out and deployed.
+            # Every GAM rollback dispatches `deploy.yml --ref main -f sha="${PRIOR_SHA}"`, so
+            # trusting head_sha here would key the canary's expect-marker off main's CURRENT tip
+            # (which, right after a bad commit lands, IS the regressed commit) instead of the
+            # commit the rollback run actually deployed — causing the guard to see the correctly
+            # rolled-back-to commit live, call it "regressed" again, and re-trigger rollback in a
+            # cascade (REL-003 fix, 2026-09-28; see resolve-dispatch-sha.mjs and deploy.yml's
+            # `run-name`, which stamps the sha this reads back out of display_title).
+            SHA="$(node .github/actions/gam-canary-rollback/resolve-dispatch-sha.mjs "${WR_DISPLAY_TITLE}" "${WR_HEAD_SHA}")"
             RUN_ID="${WR_RUN_ID}"
           else
             SHA="${GITHUB_SHA}"
@@ -93,15 +117,6 @@ jobs:
             echo "run_id=${RUN_ID}"
             echo "proceed=true"
           } >> "$GITHUB_OUTPUT"
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-        if: steps.killswitch.outputs.enabled == 'true' && steps.target.outputs.proceed == 'true'
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
-        if: steps.killswitch.outputs.enabled == 'true' && steps.target.outputs.proceed == 'true'
-        with:
-          node-version: '22'
 
       - name: resolve production host from wrangler.toml
         id: host

@@ -1,4 +1,12 @@
 name: deploy
+# Stamps the RESOLVED target sha into this run's display_title (surfaced in
+# `github.event.workflow_run.display_title` on the completion event). REL-003 fix (2026-09-28):
+# `workflow_run.head_sha` reports the DISPATCHED REF's tip for a workflow_dispatch run — never the
+# `sha` input actually checked out below — so gam-post-deploy-guard.yml cannot trust head_sha to
+# know what a rollback run deployed. This uses the exact same `inputs.sha || github.sha`
+# precedence the `resolve-target` job below resolves its checkout ref from, so the stamp and the
+# deployed commit can never diverge. See resolve-dispatch-sha.mjs.
+run-name: "deploy @ ${{ github.event.inputs.sha || github.sha }}"
 
 # Auto-deploy on push to main. Uses `deploy --name wave-bridge-edge` (NOT `--env`) to avoid the
 # wrangler env-fork bug: with a single-env wrangler.toml, `deploy --env <x>` appends <x> to the worker
@@ -53,6 +61,8 @@ jobs:
   # evaluated (environment: can only read needs.*.outputs, never a step output from its own job).
   resolve-target:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       sha: ${{ steps.target.outputs.sha }}
     steps:
@@ -73,7 +83,37 @@ jobs:
             SHA="$TIP_SHA"
           fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "Deploying: $SHA"
+          echo "Resolved target: $SHA"
+
+      # Ancestry/authorization guard — moved HERE from the `deploy` job (REL-003 fix, 2026-09-28).
+      # A workflow_dispatch caller can name ANY existing commit SHA verbatim (validated above only
+      # for hex format, not ancestry). Running this guard only after `deploy`'s checkout+`npm ci`
+      # meant a malicious non-ancestor commit's postinstall script would already have executed
+      # (with a live GITHUB_TOKEN in NODE_AUTH_TOKEN scope) by the time the guard fired — "refuse
+      # to deploy" happened after "ran npm ci from it". This job checks out `main` (a KNOWN-SAFE
+      # ref, never the untrusted target sha) with full history and only reads git objects/refs —
+      # it never checks out the target commit's working tree and never runs npm against it, so a
+      # commit crafted to execute code on checkout/install cannot run here.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          ref: main
+      - name: deploy guard — commit must be reachable from origin/main
+        env:
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          set -e
+          git fetch origin main --quiet
+          TIP=$(git rev-parse origin/main)
+          if ! git cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null; then
+            echo "::error::commit $TARGET_SHA does not exist in this repository (or is unreachable from any branch/tag) — refusing to deploy an unknown commit"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$TARGET_SHA" origin/main; then
+            echo "::error::commit $TARGET_SHA is not an ancestor of origin/main (tip $TIP) — a newer commit has superseded this run, or the rollback sha input is wrong; refusing to deploy a stale/orphaned/unreachable commit"
+            exit 1
+          fi
+          echo "deploy guard OK: $TARGET_SHA is an ancestor of origin/main (tip $TIP)"
 
   deploy:
     needs: resolve-target
@@ -85,6 +125,9 @@ jobs:
     # PR's authority.
     environment: production
     steps:
+      # Ancestry of needs.resolve-target.outputs.sha against origin/main is already verified in
+      # the `resolve-target` job ABOVE, before this job (and its npm ci) ever starts — see the
+      # comment there. By the time this checkout runs, the sha is a proven ancestor of main.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
@@ -99,23 +142,6 @@ jobs:
         run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # Belt-and-suspenders against a stale/orphaned run: refuses to deploy a commit that is
-      # not (or no longer) an ancestor of origin/main. fetch-depth: 0 above gives this full history.
-      # Checks the RESOLVED sha (which for a rollback dispatch is an OLDER commit than main's tip,
-      # but still must be an ancestor of it).
-      - name: deploy guard — commit must be reachable from origin/main
-        env:
-          TARGET_SHA: ${{ needs.resolve-target.outputs.sha }}
-        run: |
-          set -e
-          git fetch origin main --quiet
-          TIP=$(git rev-parse origin/main)
-          if ! git merge-base --is-ancestor "$TARGET_SHA" origin/main; then
-            echo "::error::commit $TARGET_SHA is not an ancestor of origin/main (tip $TIP) — a newer commit has superseded this run, or the rollback sha input is wrong; refusing to deploy a stale/orphaned/unreachable commit"
-            exit 1
-          fi
-          echo "deploy guard OK: $TARGET_SHA is an ancestor of origin/main (tip $TIP)"
-
 
       - name: token gate
         id: gate
