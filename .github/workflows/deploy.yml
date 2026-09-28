@@ -8,6 +8,20 @@ name: deploy
 # locally on a Mac; CI is the container build host.
 #
 # This workflow file is OUTSIDE the `paths` filter below, so editing it does NOT trigger a deploy.
+#
+# REL-003 (GA gate: "releases are progressive, reversible, and automatically stopped on
+# regression"): the `deploy` job below is gated on a real `environment:` — GitHub environment
+# protection rules (required reviewers, deployment branch policies) attach to that name in repo
+# settings. This is split into a `resolve-target` job (computes the target sha, no secrets) and the
+# gated `deploy` job, because `environment:` can only read `needs.<job>.outputs.*`, never a step
+# output from its own job.
+#
+# ROLLBACK-BY-DISPATCH: `gh workflow run` accepts a branch/tag `--ref`, never a commit SHA (the
+# GitHub REST API rejects a SHA as workflow_dispatch ref). To let gam-post-deploy-guard.yml (or an
+# operator) roll back to an exact PRIOR commit while still dispatching on a valid branch ref, this
+# workflow accepts an optional `sha` input: dispatch stays on `--ref main`, and `sha` names the
+# exact commit to check out, deploy, and verify. Omitted (the common case) it defaults to the
+# dispatched ref's own tip.
 
 on:
   push:
@@ -19,6 +33,11 @@ on:
       - "package.json"
       - "package-lock.json"
   workflow_dispatch:
+    inputs:
+      sha:
+        description: "Exact commit SHA to deploy (rollback use — leave empty to deploy main's tip)"
+        required: false
+        default: ""
 
 concurrency:
   group: deploy-wave-bridge-edge
@@ -29,12 +48,47 @@ permissions:
   packages: read
 
 jobs:
-  deploy:
+  # Ungated on purpose: this job only computes WHICH commit the deploy job below will target. It
+  # touches no secrets, deploys nothing, and must run before the `environment:` gate can be
+  # evaluated (environment: can only read needs.*.outputs, never a step output from its own job).
+  resolve-target:
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.target.outputs.sha }}
+    steps:
+      - name: resolve target sha
+        id: target
+        env:
+          INPUT_SHA: ${{ github.event.inputs.sha }}
+          TIP_SHA: ${{ github.sha }}
+        run: |
+          set -e
+          if [ -n "$INPUT_SHA" ]; then
+            if ! printf '%s' "$INPUT_SHA" | grep -qE '^[0-9a-f]{7,40}$'; then
+              echo "::error::workflow_dispatch input sha '$INPUT_SHA' is not a lowercase hex commit SHA"
+              exit 1
+            fi
+            SHA="$INPUT_SHA"
+          else
+            SHA="$TIP_SHA"
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Deploying: $SHA"
+
+  deploy:
+    needs: resolve-target
+    runs-on: ubuntu-latest
+    # REL-003 approval gate: this name is what a repo admin attaches required-reviewer /
+    # deployment-branch-policy protection rules to (Settings → Environments). Until an operator
+    # configures protection on "production" this is a no-op passthrough — wiring the name is the
+    # code-side half of the fix; the protection rule itself is a repo-settings action outside this
+    # PR's authority.
+    environment: production
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          ref: ${{ needs.resolve-target.outputs.sha }}
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "22"
@@ -47,16 +101,20 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Belt-and-suspenders against a stale/orphaned run: refuses to deploy a commit that is
       # not (or no longer) an ancestor of origin/main. fetch-depth: 0 above gives this full history.
+      # Checks the RESOLVED sha (which for a rollback dispatch is an OLDER commit than main's tip,
+      # but still must be an ancestor of it).
       - name: deploy guard — commit must be reachable from origin/main
+        env:
+          TARGET_SHA: ${{ needs.resolve-target.outputs.sha }}
         run: |
           set -e
           git fetch origin main --quiet
           TIP=$(git rev-parse origin/main)
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::commit $GITHUB_SHA is not an ancestor of origin/main (tip $TIP) — a newer commit has superseded this run; refusing to deploy a stale/orphaned commit"
+          if ! git merge-base --is-ancestor "$TARGET_SHA" origin/main; then
+            echo "::error::commit $TARGET_SHA is not an ancestor of origin/main (tip $TIP) — a newer commit has superseded this run, or the rollback sha input is wrong; refusing to deploy a stale/orphaned/unreachable commit"
             exit 1
           fi
-          echo "deploy guard OK: $GITHUB_SHA is an ancestor of origin/main (tip $TIP)"
+          echo "deploy guard OK: $TARGET_SHA is an ancestor of origin/main (tip $TIP)"
 
 
       - name: token gate
@@ -76,17 +134,17 @@ jobs:
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          command: deploy --name wave-bridge-edge --var GIT_SHA:${{ github.sha }}
+          command: deploy --name wave-bridge-edge --var GIT_SHA:${{ needs.resolve-target.outputs.sha }}
 
       # Proven-live gate (proven-live-or-not-done): a green `wrangler deploy` only proves the API
       # call succeeded, not that the right bundle is answering live traffic. This step is the
       # receipt. Skips (notices, does not fail) when the resolved env has no live route configured
-      # in wrangler.toml.
+      # in wrangler.toml. Verifies against the RESOLVED sha (rollback-aware).
       - name: post-deploy verify — proven live, not merely deployed
         if: steps.gate.outputs.deploy == 'true'
         env:
           TARGET_ENV: production
-          EXPECT_SHA: ${{ github.sha }}
+          EXPECT_SHA: ${{ needs.resolve-target.outputs.sha }}
         run: |
           set -e
           HOST=$(node scripts/ci/resolve-deploy-host.mjs "$TARGET_ENV" || true)
