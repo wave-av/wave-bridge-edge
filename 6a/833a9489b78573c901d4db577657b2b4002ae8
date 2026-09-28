@@ -1,0 +1,35 @@
+.github/workflows/deploy.yml
+  s_13ccc7d9001218::t_a1dcfa8da72ef9 11-24,36-40,51-77,79,81-86,91,104-105,107-108,113-114,117,137,142,147
+.github/workflows/gam-post-deploy-guard.yml
+  s_13ccc7d9001218::t_1be7516a656f79 1-138
+.github/actions/gam-canary-rollback/test/health-marker-format.test.mjs
+  s_13ccc7d9001218::t_a635fe2e8984d8 1-69
+.github/actions/gam-canary-rollback/action.yml
+  s_13ccc7d9001218::t_d45371e95084e8 1-129
+.github/actions/gam-canary-rollback/canary-probe.mjs
+  s_13ccc7d9001218::t_393ec1ffb0e497 1-156
+.github/actions/gam-canary-rollback/resolve-prior-good-sha.mjs
+  s_13ccc7d9001218::t_174adc9ff081c9 1-60
+.github/actions/gam-canary-rollback/test/canary-probe.test.mjs
+  s_13ccc7d9001218::t_532e64ff0281d6 1-109
+.github/actions/gam-canary-rollback/test/resolve-prior-good-sha.test.mjs
+  s_13ccc7d9001218::t_bebcec3e7c01cb 1-80
+.github/actions/gam-canary-rollback/test/wrapper-failclosed.test.mjs
+  s_13ccc7d9001218::t_a73a366bba7e79 1-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "6a833a9489b78573c901d4db577657b2b4002ae8",
+  "prompts": {},
+  "sessions": {
+    "s_13ccc7d9001218": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "11229abc-f617-4541-b5d7-d693c6ae4d9d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
