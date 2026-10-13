@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Verbatim `run:` body of GitHub Actions step
+#   go-lint.yml / job go-lint / step [3] "(unnamed; matrix.dir containers/srt/adapter)"
+# at wave-av/wave-bridge-edge 698f7f7509c9. Do not edit by hand: re-extract from the workflow (see .buildkite/README.md).
+# gh-shell: default
+# gh-working-directory: containers/srt/adapter
+# Run by .buildkite/scripts/lib/common.sh as `bash -e <this file>` (GH default shell), or `bash -eo pipefail` when the step set `shell: bash`.
+test -z "$(gofmt -l .)" || { echo 'gofmt needed:'; gofmt -l .; exit 1; }
