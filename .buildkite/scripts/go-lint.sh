@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Buildkite step go-lint: replaces GitHub Actions go-lint.yml `go-lint`, a 4-cell matrix over the Go
-# container adapters (gofmt, then go vet). The cells run one after another in this one guest; every
+# container adapters (gofmt, then go vet). The cells run one after another in this one job; every
 # cell's gates run even after a failure (GH used fail-fast: false).
 # The gates are the verbatim `run:` bodies under .buildkite/gates/ (see lib/common.sh for the contract).
 # shellcheck source-path=SCRIPTDIR source=lib/common.sh

@@ -6,7 +6,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 bk_require_buildkite
 
-# The CI image runs Docker rootless; the docker CLI on PATH reaches the job's own daemon. No registry
+# The docker CLI on PATH reaches the job's own Docker daemon. No registry
 # credential exists in this job: the build pulls public base images only, and nothing is pushed.
 if bk_require_tools docker tar grep find; then
   bk_gate 'build the image to be gated' image-content-gate.ndi.02-build-the-image-to-be-gated.gate
