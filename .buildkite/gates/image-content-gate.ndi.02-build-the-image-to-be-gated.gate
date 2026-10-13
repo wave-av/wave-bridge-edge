@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Verbatim `run:` body of GitHub Actions step
+#   image-content-gate.yml / job ndi / step [2] "build the image to be gated"
+# at wave-av/wave-bridge-edge 698f7f7509c9. Do not edit by hand: re-extract from the workflow (see .buildkite/README.md).
+# gh-shell: default
+# gh-env: IMAGE=wave-ndi-bridge:ci
+# gh-env: CONTEXT=containers/ndi
+# gh-env: DOCKERFILE=
+# gh-env: BUILD_ARGS=
+# gh-env: FORBID=libndi|ndi-discovery-server|ndi-record|ndi-embedded-bridge|ndi-benchmark
+# gh-env: CONTROL=usr/local/bin/entrypoint.sh
+# gh-env: REASON=wave-av/wave-ndi-edge containers/ndi/LICENSING.md
+# gh-env: ADVISORY=false
+# Run by .buildkite/scripts/lib/common.sh as `bash -e <this file>` (GH default shell), or `bash -eo pipefail` when the step set `shell: bash`.
+set -euo pipefail
+df="${DOCKERFILE:-}"
+[ -n "$df" ] || df="${CONTEXT}/Dockerfile"
+[ -f "$df" ] || { echo "::error::COULD-NOT-SCAN: no Dockerfile at ${df}"; exit 2; }
+args=()
+while IFS= read -r line; do
+  [ -n "$line" ] && args+=(--build-arg "$line")
+done <<< "${BUILD_ARGS}"
+echo "==> docker build -t ${IMAGE} -f ${df} ${CONTEXT}"
+# A build failure is a COULD-NOT-SCAN, not a finding: we learned nothing about the image.
+docker build -t "$IMAGE" -f "$df" "${args[@]}" "$CONTEXT" || {
+  echo "::error::COULD-NOT-SCAN: the image failed to build, so nothing was measured."
+  exit 2
+}

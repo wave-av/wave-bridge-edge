@@ -1,0 +1,77 @@
+{
+  "$comment": "NOT RENDERED. The renderer reads only .buildkite/wave-ci.json (its top-level keys are a closed set). parked_jobs lists every GitHub Actions job that has no running Buildkite step yet, with the reason and the blocker, so nothing is dropped. To port one, write its step script (and verbatim gates) once the blocker lands, add the step to extra_steps in wave-ci.json, and move its row in .buildkite/README.md. This is a public repository: a step that needs a secret also needs a secrets entry for a public pipeline, which does not exist today.",
+  "deferred_extra_steps": [],
+  "deferred_schedules": [],
+  "parked_jobs": [
+    {
+      "workflow": "typecheck.yml",
+      "job": "typecheck",
+      "category": "private-npm-packages",
+      "reason": "`npm ci` installs @wave-av/spoke-chassis and @wave-av/container-pool from GitHub Packages, which the Buildkite agents cannot read from (HTTP 403). The step would fail every build at install.",
+      "blocked_on": "WAVE's self-hosted npm registry (in progress) (with @wave-av/container-pool in its package list), plus a registry read credential for this public pipeline"
+    },
+    {
+      "workflow": "test.yml",
+      "job": "test",
+      "category": "private-npm-packages",
+      "reason": "vitest (Workers pool) needs the full install, which includes the private @wave-av packages (HTTP 403).",
+      "blocked_on": "WAVE's self-hosted npm registry (in progress) (with @wave-av/container-pool in its package list), plus a registry read credential for this public pipeline"
+    },
+    {
+      "workflow": "bundle-eval-gate.yml",
+      "job": "bundle-eval",
+      "category": "private-npm-packages",
+      "reason": "boots the Worker bundle in workerd after a full install that includes the private @wave-av packages (HTTP 403).",
+      "blocked_on": "WAVE's self-hosted npm registry (in progress) (with @wave-av/container-pool in its package list), plus a registry read credential for this public pipeline"
+    },
+    {
+      "workflow": "governance-enforce.yml",
+      "job": "enforce",
+      "category": "private-npm-packages",
+      "reason": "installs @wave-av/governance from GitHub Packages (HTTP 403) before it can scan the diff.",
+      "blocked_on": "WAVE's self-hosted npm registry (in progress), plus a registry read credential for this public pipeline"
+    },
+    {
+      "workflow": "ffmpeg-bench.yml",
+      "job": "bench",
+      "category": "private-repository-credential",
+      "reason": "advisory A/B benchmark. It checks out its harness from a private repository with CONFORMANCE_REPO_PAT on pull_request builds only, and posts a sticky PR comment with a GitHub write token. In this public repository a step holds a secret only when it needs it on main, and this one never runs on main. Its two cold source builds of ffmpeg also exceed the 60-minute step cap (GitHub allows 120). The tools are not the blocker: the CI image has Docker with buildx, ffmpeg 6.1.1 and Go 1.27.1.",
+      "blocked_on": "a PR-build credential decision for a public pipeline (or a public harness), a GitHub write path for the comment (the GitHub-event bridge, in progress), and a persistent build cache that fits the step cap"
+    },
+    {
+      "workflow": "ffmpeg-bench.yml",
+      "job": "check-secret",
+      "category": "private-repository-credential",
+      "reason": "GitHub-only plumbing: it reports whether CONFORMANCE_REPO_PAT is provisioned so `bench` can no-op. It has no meaning without `bench`.",
+      "blocked_on": "ported together with `bench`"
+    },
+    {
+      "workflow": "ffmpeg-bench.yml",
+      "job": "warm-baseline-cache",
+      "category": "build-cache",
+      "reason": "only writes the main-branch recipe's layers into the GitHub Actions cache (type=gha) so PR bench runs start warm. Buildkite CI machines are single-use and have no shared layer cache, so the build would warm nothing; a cold build of the recipe (AVM + ffmpeg from source) also exceeds the 60-minute step cap.",
+      "blocked_on": "a persistent build cache for CI jobs, and `bench` being ported"
+    },
+    {
+      "workflow": "deploy.yml",
+      "job": "deploy",
+      "category": "deploy",
+      "reason": "production deploy on push to main (wrangler deploy with Cloudflare credentials). Deploy and publish jobs are out of scope for this port.",
+      "blocked_on": "an explicit decision to move the deploy to Buildkite"
+    },
+    {
+      "workflow": "issue-ops-triage.yml",
+      "job": "triage",
+      "category": "github-event-bot",
+      "reason": "runs on issue events and writes to issues with a bot identity.",
+      "blocked_on": "a GitHub-event bridge for Buildkite (in progress)"
+    },
+    {
+      "workflow": "pr-agent.yml",
+      "job": "pr_agent",
+      "category": "github-event-bot",
+      "reason": "AI PR review that posts comments (GitHub write token, model API key) and answers issue_comment slash commands.",
+      "blocked_on": "a GitHub-event bridge for Buildkite (in progress)"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "$comment": "Pipeline template settings. Ports wave-bridge-edge's credential-free GitHub Actions PR/push gates to Buildkite; the parity table for every GH job is in .buildkite/README.md. Public repository: no step declares a secret, and fork PRs never build (pipeline setting build_pull_request_forks: false). Jobs that need private npm packages, a GitHub event bridge or a private-repository credential, or that deploy, are parked in .buildkite/wave-ci.deferred.json with the reason and the blocker.",
+  "wave_ci": "296cc0cf4faf1f06d0acd4c2a767d6c111d2adf3",
+  "repo": "wave-av/wave-bridge-edge",
+  "pipeline": "wave-bridge-edge",
+  "template": "custom",
+  "visibility": "public",
+  "default_branch": "main",
+  "extra_steps": [
+    {
+      "key": "foundation-gate",
+      "label": ":shield: foundation-gate: secret scan, file-size, skill-validate, verify-routes",
+      "script": ".buildkite/scripts/foundation-gate.sh",
+      "timeout": 10
+    },
+    {
+      "key": "public-repo-guard",
+      "label": ":lock: public-repo-guard: gitleaks + content policy (published tree)",
+      "script": ".buildkite/scripts/public-repo-guard.sh",
+      "timeout": 15
+    },
+    {
+      "key": "go-lint",
+      "label": ":go: go-lint: gofmt + go vet (4 container adapters)",
+      "script": ".buildkite/scripts/go-lint.sh",
+      "timeout": 10,
+      "pr_only": true
+    },
+    {
+      "key": "image-content-gate",
+      "label": ":docker: image-content-gate: containers/ndi ships no NDI runtime",
+      "script": ".buildkite/scripts/image-content-gate.sh",
+      "timeout": 30,
+      "paths": [
+        "containers/ndi/**",
+        ".github/workflows/image-content-gate.yml"
+      ],
+      "paths_on_default_branch": true
+    }
+  ]
+}
