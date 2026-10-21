@@ -8,6 +8,7 @@
 // Honesty: this is live only when the MOQ_BRIDGE container binding is actually present. If it is
 // absent (e.g. a plan/account without CF Containers), the handler FAIL-CLOSES to a typed 501 — it
 // never fabricates a round-trip. No flag flip can make an absent container answer.
+import { errorFields, logEvent } from './obs';
 import { Container, getContainer } from '@cloudflare/containers';
 import { resolvePoolSize, poolContainerId, isContainerStartFailure } from '@wave-av/container-pool';
 
@@ -139,8 +140,10 @@ export async function handleMoqBridge(request: Request, env: MoqEnv): Promise<Re
   let res: Response;
   try {
     res = await container.fetch(new Request(`http://moq/bridge?n=${n}`, { method: 'GET' }));
-  } catch {
+  } catch (e) {
     // Container failed to START by THROWING (cold-start error). Honest 503 backpressure — never a raw 500.
+    // Logged: this used to be swallowed, so cold-start failures were invisible behind the 503.
+    logEvent('bridge_container_start_failed', { strand: 'moq', ...errorFields(e) }, 'warn');
     return unavailableResponse();
   }
   // CF Containers signals pool exhaustion by RETURNING a 5xx (it does not throw), so inspect the body:

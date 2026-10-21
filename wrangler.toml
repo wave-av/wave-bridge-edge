@@ -35,6 +35,12 @@ routes = [
   { pattern = "bridge.wave.online/egress*", zone_name = "wave.online" },
 ]
 
+# Workers Logs: keeps the structured bridge_* lines (src/obs.ts) queryable. This worker had no
+# [observability] block, so nothing it logged was retained.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 # wave-foundation pin — keep in sync with .foundation-version.
 [[unsafe.bindings]]
 type = "plain_text"
