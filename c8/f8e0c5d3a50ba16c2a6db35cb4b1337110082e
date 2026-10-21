@@ -1,0 +1,22 @@
+src/moq.ts
+  h_af5ac1a9798224 11,143,145-146
+src/obs.ts
+  h_af5ac1a9798224 1-60
+src/worker.ts
+  h_af5ac1a9798224 6,41,43-68,129
+test/obs.spec.ts
+  h_af5ac1a9798224 1-40
+wrangler.toml
+  h_af5ac1a9798224 38-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "c8f8e0c5d3a50ba16c2a6db35cb4b1337110082e",
+  "prompts": {},
+  "humans": {
+    "h_af5ac1a9798224": {
+      "author": "Jake Fineman <jakefineman@gmail.com>"
+    }
+  }
+}
