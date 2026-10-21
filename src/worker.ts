@@ -3,6 +3,7 @@
 // objects through the live moq.wave.online relay. /srt and /ndi remain honest typed 501 — CF
 // Containers have no public UDP ingress, so those strands can't run hosted yet. No route fabricates
 // transport: each fail-closes to its typed 501 unless its specific container binding is present.
+import { errorCodeOf, errorFields, logEvent, requestIdOf, routeOf } from "./obs";
 import { handleSrt, type BridgeEnv } from "./srt";
 import { handleNdi } from "./ndi";
 import { handleOmt } from "./omt";
@@ -37,7 +38,34 @@ const CHASSIS_PATHS = new Set(["/favicon.svg", "/favicon.ico", "/robots.txt"]);
 export { MoqContainer, SrtContainer, FfmpegContainer, NdiContainer, OmtContainer };
 
 export default {
+	// One bridge_request line + x-request-id per request; thrown errors logged (./obs).
 	async fetch(request: Request, env: BridgeEnv & MoqEnv, ctx?: ExecutionContext): Promise<Response> {
+		const t0 = Date.now();
+		const rid = requestIdOf(request);
+		const route = routeOf(new URL(request.url).pathname);
+		let res: Response;
+		try {
+			res = await handle(request, env, ctx);
+		} catch (e) {
+			logEvent("bridge_unhandled_error", { rid, route, ...errorFields(e) }, "error");
+			res = Response.json({ error: "BRIDGE_INTERNAL_ERROR", request_id: rid }, { status: 500 });
+		}
+		const status = res.status;
+		const error = status >= 400 ? await errorCodeOf(res) : undefined;
+		logEvent("bridge_request", { rid, method: request.method, route, status, ms: Date.now() - t0, error },
+			status >= 500 && status !== 501 ? "error" : status >= 400 ? "warn" : "info");
+		if (status !== 101) {
+			try {
+				res.headers.set("x-request-id", rid);
+			} catch {
+				/* immutable headers: the log line keeps the id */
+			}
+		}
+		return res;
+	},
+};
+
+async function handle(request: Request, env: BridgeEnv & MoqEnv, ctx?: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 		if (url.pathname.startsWith("/_wave/") || CHASSIS_PATHS.has(url.pathname)) {
 			return chassis(request, env as unknown as Parameters<typeof chassis>[1], ctx);
@@ -98,8 +126,7 @@ export default {
 			{ error: "BRIDGE_NOT_IMPLEMENTED", protocol: url.pathname.split("/")[1] ?? "unknown" },
 			{ status: 501 },
 		);
-	},
-};
+}
 
 // Agent-discovery surface (llms.txt convention) — the machine-readable "what is this" that
 // autonomous agents fetch first. This bridge is early scaffold; said so honestly.
