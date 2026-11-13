@@ -38,7 +38,7 @@ LOCALLY first to smoke the sender against a local `ffplay` listener — do NOT p
 NAME it. Verify the digest pulls clean.
 
 ### 3. ◆ Enable CF Containers on the deploying account
-**◆** CF Containers must be ON for the account that deploys (the Jake@gmail account — the wave.online
+**◆** CF Containers must be ON for the account that deploys (the paid Cloudflare account that has Containers enabled — the wave.online
 account is free-tier with no Containers). This is an account-capability + spend crossing — NAME it.
 
 ### 4. Uncomment the SrtContainer binding (build-only — no ◆)

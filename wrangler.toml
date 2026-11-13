@@ -66,8 +66,8 @@ GIT_SHA = "unset"
 # works from inside a container. The image (containers/moq) runs the PROVEN strand verbatim and
 # round-trips real objects through moq.wave.online. Current-schema container block (mux-engine pattern):
 # built at deploy from the Dockerfile, bound as a Durable Object the Worker reaches via getContainer().
-# Requires CF Containers on the deploying account (Jake@gmail acct — wave.online acct is free-tier, no
-# Containers). If the binding is absent, src/moq.ts fail-closes to a typed 501 (no fabricated round-trip).
+# Requires CF Containers on the deploying account (the paid Cloudflare account that has Containers enabled — the wave.online
+# account is free-tier, no Containers). If the binding is absent, src/moq.ts fail-closes to a typed 501 (no fabricated round-trip).
 # max_instances is the HARD ceiling on live MoqContainer instances. src/moq.ts hashes requests across a
 # warm pool of MOQ_POOL_SIZE stable shards (default 8, env-tunable without a code deploy); max_instances
 # = pool size + RECYCLE HEADROOM so the platform can start a replacement instance while an old one drains.
